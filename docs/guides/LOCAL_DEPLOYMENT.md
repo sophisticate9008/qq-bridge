@@ -82,9 +82,19 @@ GPT 按 [Responses API](https://developers.openai.com/api/docs/models/gpt-6.1-so
 主人消息无需 @；小鲸鱼、鲸鲸、大肥鱼也会唤醒，且不受模型临时潜水配置覆盖。
 延迟还取决于网络、模型和工具耗时，不作固定秒数承诺。
 
-本机部署覆盖保存在 `dsh/deployment/chat-persona.txt` 和 `roles/鲸鲸.md`，
-执行 `node ops/configure-local-chat.mjs` 可重建 profile 覆盖与聊天策略，不改上游预设源。
-重启 DSH 与 bridge 加载，保留 `state/sessions.json`，**不要以重置聊天解决配置更新**。
+鲸鲸人格保存在 `roles/鲸鲸.md`，参考内置 `roles/小鲸鱼.md` 丰富了性格、喜好、熟人互动和语感示例。
+人格卡只管身份和表达；快速响应、权限和 GPT 委派仍由预设规则控制。
+二代预设的权威源是 `dsh/agent-presets/qq-chat-v2/agent.cordis.yml`，其中已纳入本机聊天与工作协作规则。
+一代部署前缀仍用 `dsh/deployment/chat-persona.txt`；修改它时如需影响二代，应同步修改二代权威源。
+
+同步顺序：`node scripts/build-agent-preset-patches.mjs` → `node ops/configure-local-chat.mjs` →
+`qqbridge restart dsh` → `qqbridge restart bridge`。
+部署脚本为二代保留权威源的完整 persona，不再用短版部署前缀覆盖；原生委派插件仍自动装入。
+可对比生成 patch、profile 中 `preset-qq-chat-v2` 的 persona 与源，确认一致。
+
+通常配置更新保留连续上下文；只有主人明确要求重置时，先备份私有会话状态，
+再通过控制台 `/api/session/reset` 对 QQ 会话逐个重置。接口停止并归档旧会话，
+清除桥接映射和仿真状态；下一条消息会新建会话并重新读取人格，不删除 DSH 历史文件。
 
 主人改名入口支持“把我的群名片改成 名字”“把你的群名片改成 名字”“把你的昵称改成 名字”，
 也支持 `/名片 名字`、`/机器人名片 名字`、`/机器人昵称 名字`。

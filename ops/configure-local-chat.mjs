@@ -25,7 +25,9 @@ for (const name of ['qq-chat', 'qq-chat-v2']) {
   const generated = yaml.load(fs.readFileSync(path.join(root, `plugins/qq-agent-presets/presets/${name}.patch.yml`), 'utf8'));
   const row = generated.flatMap(p => p.insert ?? []).find(p => p.config?.id === name);
   const persona = row.config.plugins.find(p => p.id === 'persona');
-  persona.config.prefix = prefix;
+  // V2's editable source is authoritative, including the local delegation policy.
+  // Do not silently replace it with the shorter deployment prefix during sync.
+  if (name === 'qq-chat') persona.config.prefix = prefix;
   persona.config.suffix = '';
   row.config.plugins.push({ id: 'owner-delegation', name: 'qq-agent-presets/owner-delegation.mjs' });
   let override = profile.find(p => p.id === `preset-${name}`);
