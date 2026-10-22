@@ -1,4 +1,4 @@
-// Deployment launcher. Application sources remain identical to upstream.
+// Deployment launcher with isolated component directories.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

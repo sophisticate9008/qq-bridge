@@ -10,5 +10,6 @@
 GPT provider 为 `local-gpt`，工作模型固定 `gpt-6.1-sol`，使用本机已有 API 的 Responses 协议。
 密钥仅在 `home/.credentials.yaml` 和 `config/local/models.json`，权限 0600。
 
-桥接上游当前仅允许 low / high / max，会把 off 改回 max；在暂不修改应用代码的阶段使用 low。
-官方 API 的独立非思考模式已实测，后续 Fork 再加入完整 off 支持，不能将 low 宣称为关闭思考。
+Fork 已补齐 off 支持，聊天使用 off，GPT 子代理固定 high。
+`deployment/chat-persona.txt` 与 `plugins/owner-delegation/` 让同一个 DeepSeek 聊天会话进行原生委派；结果回到父上下文，后续要求复用子代理。
+运行 `node ops/configure-local-chat.mjs` 应用本机覆盖，随后重启 DSH/bridge，不重置聊天历史。

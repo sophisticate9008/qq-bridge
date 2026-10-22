@@ -10,3 +10,19 @@ SnowLuma 为同一 QQ 账号建立两条连接：
 
 真寻插件及数据库保留，不复制、不重新初始化。检查运行状态时，应同时验证
 SnowLuma `get_login_info`、`get_status` 和真寻日志中的 OneBot 连接成功记录。
+
+## 小鲸鱼名称配置
+
+实际运行配置是 `instance/.env.dev`（`instance/.env` 设置 `ENVIRONMENT=dev`）：
+
+```dotenv
+NICKNAME=["小鲸鱼", "鲸鲸", "大肥鱼"]
+SELF_NICKNAME="小鲸鱼"
+```
+
+旧的“真寻 / 小真寻 / 绪山真寻 / 小寻子”不再作为 NoneBot 呼叫名。
+修改后必须重启 `zhenxun` 服务；只改 DSH 提示词不会改变 NoneBot 的称呼触发规则。
+`NICKNAME` 控制呼叫触发，`SELF_NICKNAME` 控制插件读取的机器人自称。
+部分第三方插件可能自带硬编码文本或专用命令，它们不属于 NoneBot 呼叫名。
+QQ 账号展示昵称另由协议端 `set_qq_profile` 修改；`get_login_info` 可能保留旧缓存，
+应同时用 `get_stranger_info(no_cache=true)` 核验资料更新。

@@ -6,6 +6,8 @@
 //
 // 用法：node src/bridge.js （先编辑 ../config.json）
 import fs from 'node:fs';
+import { createDelegationAuthority } from './local/delegation-authority.js';
+import { localWakeReason, ownerIdentityHint, handleOwnerNickname } from './local/owner-policy.js';
 import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
@@ -569,8 +571,8 @@ let modelCatalogInFlight = null;
 // 放在模块级是为了不依赖 main() 内部声明的执行顺序（避免 TDZ）。
 let modelSelectionEpoch = 0;
 // DeepSeek provider 明确支持的取值（见 dsh-llm-deepseek：其它值会抛 UNSUPPORTED_REASONING_EFFORT）。
-// 'off' 虽然合法（关闭思考），但 QQ 聊天助手依赖思考，控制台不提供该档。
-const REASONING_EFFORT_OPTIONS = ['low', 'high', 'max'];
+// Fast chat can disable reasoning; GPT work sessions keep their separate effort.
+const REASONING_EFFORT_OPTIONS = ['off', 'low', 'high', 'max'];
 const REASONING_EFFORT_DEFAULT = 'max';
 function normalizeReasoningEffort(value) {
   const v = String(value ?? '').trim().toLowerCase();
@@ -675,6 +677,7 @@ function loadConfig() {
     agentPreset: file.agentPreset ?? 'qq-chat',
     workspaceTitle: file.workspaceTitle ?? 'QQ 聊天',
     ownerQQ: normalizeOwnerQQ(file.ownerQQ),
+    localPolicy: file.localPolicy ?? {},
     allow: {
       private: normalizeIdList(file.allow?.private ?? file.allow?.privates ?? []),
       groups: normalizeIdList(file.allow?.groups ?? file.allow?.group ?? [])
@@ -2335,6 +2338,7 @@ async function main() {
     // 默认只允许把 launch token 交给回环地址；远程 DSH 需要显式 opt-in（见 dsh-client.ensureAuth）。
     allowRemote: cfg.dsh.allowRemote === true
   });
+  const ownerDelegation = createDelegationAuthority(ROOT, () => cfg.ownerQQ);
   // DSH 的模型目录 RPC：0.1.5 是 `session/modelCatalog`。**不能走基类门面**
   // `api.sessions.modelCatalog` —— 桥接钉住的 `@deepseek-ai/dsh-host-apiproxy@0.1.1-rc.2`
   // 的 sessions 门面里根本没有这个方法（只有 `models` → 已下线的 `session/models`），
@@ -4604,6 +4608,22 @@ async function main() {
           });
           return;
         }
+        if (req.method === 'POST' && url.pathname.startsWith('/api/socialV2/delegation/')) {
+          const body = await readBody();
+          const key = String(body.key ?? '');
+          if (!cfg.localPolicy?.delegation || !agentTokenOk(key, req.headers['x-agent-token']) || !v2SessionAllowed(key) || state.sessions[key] !== body.parentId) {
+            sendJson({ ok: false, error: '委派仅限当前已授权 QQ 会话' }, 403); return;
+          }
+          try {
+            const operation = url.pathname.split('/').pop();
+            if (operation === 'authorize') {
+              if (!['start', 'followup', 'interrupt'].includes(body.action)) throw new Error('委派动作无效');
+              sendJson({ ok: true, ...ownerDelegation.authorize(body) });
+            } else if (operation === 'register') sendJson(ownerDelegation.register(body));
+            else sendJson({ ok: false, error: '未知委派动作' }, 404);
+          } catch (error) { sendJson({ ok: false, error: error.message }, 403); }
+          return;
+        }
         if (req.method === 'GET' && url.pathname === '/api/socialV2/prompt') {
           const key = String(url.searchParams.get('key') ?? '').trim();
           if (!key) { sendJson({ ok: false, error: 'key 不能为空' }, 400); return; }
@@ -4664,6 +4684,7 @@ async function main() {
               userId: selfUserId || null,
               line: selfIdentityTextV2().trim() || null
             },
+            ownerPolicy: ownerIdentityHint(cfg),
             role: { name: roleState.role ?? null, hint: currentMode === 'reserved2' ? currentRoleHintV2() : currentRoleHint() },
             recommended: cfg.socialV2?.provideRecommendations === false ? null : {
               wake: cfg.socialV2?.wake ?? {},
@@ -8599,9 +8620,9 @@ async function main() {
     const last = [...recent].reverse().find((m) => m && !m.isSelf);
     if (!last) return defaultMs;
     const text = String(last.tail || last.plain || last.text || '').trim();
-    if (looksLikeUnfinished(text)) return 12000;
+    if (looksLikeUnfinished(text)) return Number(cfg.socialV2?.wait?.unfinishedQuietMs) || 12000;
     const burst = recent.filter((m) => m && !m.isSelf && Date.now() - Number(m.time || 0) < 15000).length;
-    if (burst >= 3) return 12000;
+    if (burst >= 3) return Number(cfg.socialV2?.wait?.burstQuietMs) || 12000;
     return defaultMs;
   }
 
@@ -9845,6 +9866,8 @@ async function main() {
 
   function evaluateWakeTriggerV2(key, st, event, kind, textContent, plainContent, quoteTargetIsSelf) {
     if (kind === 'private') return 'private';
+    const localReason = localWakeReason(cfg, event, plainContent);
+    if (localReason) return localReason;
     const tr = st.wakeConfig?.triggers ?? {};
     if (tr.anyMessage) return 'anyMessage';
     if (tr.atMention) {
@@ -10012,7 +10035,9 @@ async function main() {
     // 避免唤醒 prompt 出现两份黑话表。
     const participationText = formatParticipationV2(st);
     const participationLine = participationText ? `${participationText}\n\n` : '';
-    const antiAiLine = '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n';
+    const antiAiLine = cfg.localPolicy?.ownerAlwaysWake
+      ? '【聊天风格】自然短句、接梗、不用客服套话；主人明确请求认真处理，不装傻敷衍，不故意拖延。工作过程留在内部上下文，群里只按人设说真实结论。\n\n'
+      : '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n';
     const stickerCfg = cfg.socialV2?.sticker ?? {};
     const stickerLine = stickerCfg.enabled !== false && stickerCfg.includeInPrompt !== false
       ? `${buildStickerStrategyHint()}\n${buildStickerContext(stickerEntries, stickerCfg.promptMaxStickers ?? 8)}\n\n`
@@ -10021,7 +10046,9 @@ async function main() {
     const proactiveLine = '【积极性】不要习惯性潜水：群里有你能接的话题就主动参与，偶尔插一句别人的话题也很正常；只有确实没话可说、对方已明确结束、或长时间没人说话时才潜水。\n\n';
     const replyTiming = replyTimingV2(st);
     const replyLine = `【首回复节奏】先处理已有消息，完整的问题及时回答。需要确认对方是否继续补充时，用 qq_wait_for_messages(purpose="reply", quietMs=${replyTiming.quietMs})；从最后来信计时，合批和读提示词的耗时也算，目前还差约 ${Math.ceil(replyTiming.remainingQuietMs / 1000)} 秒静默。已安静够久可直接回，工具也会立即返回并补上思考期间的新消息。只有明确没说完、你确实要等下文时，才用普通 messages 长等待。\n\n`;
-    const preSleepLine = `【沉睡前强制等待】这是决定潜水收尾时的步骤，不是首回复的前置条件。除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；回复前 purpose="reply" 的短静默不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages——判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
+    const preSleepLine = cfg.socialV2?.wake?.preSleepWaitEnabled === false
+      ? '【快速收尾】沉睡前观察已关闭。处理消息后立即提交已读水位并结束回合；后续新消息由桥接唤醒，不要调用长等待，不要为等下一句话占住回合。\n\n'
+      : `【沉睡前强制等待】这是决定潜水收尾时的步骤，不是首回复的前置条件。除非对方明确说“不聊了/晚安/下了/拜拜”等结束语，否则每次设置潜水/下一次唤醒前，必须先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成一次沉睡前观察；回复前 purpose="reply" 的短静默不能代替这次完整观察。若 ${Math.round(preSleepMs / 60000)} 分钟内没人说话，返回 preSleepWaitSatisfied=true，可以设置下一次唤醒并沉睡；若期间有人发新消息，先查看返回的 newMessages——判断不需要你参与就可以直接沉睡，若你选择参与回复，则下次想睡时需要重新等待观察窗口。如果返回里带 preSleepWaitRemainingMs，就按剩余时间继续等待。\n\n`;
     const lastMsg = [...(Array.isArray(st.recentMessages) ? st.recentMessages : [])].reverse().find((m) => m && !m.isSelf);
     const lastAiMin = st.lastAiReplyAt ? Math.max(0, Math.round((Date.now() - Number(st.lastAiReplyAt)) / 60000)) : null;
     const statusBits = [`未读 ${(st.unread || []).length} 条`];
@@ -10048,7 +10075,7 @@ async function main() {
     // 后续唤醒不再带它 —— 那时它已经在这条 DSH 会话的上下文里了。
     const initialPromptText = reason === 'bootstrap' ? formatInitialPromptV2(key) : '';
     const initialPromptLine = initialPromptText ? `${initialPromptText}\n\n` : '';
-    const base = roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine;
+    const base = roleLine + identityLine + ownerIdentityHint(cfg) + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看角色、推荐值、可用工具和状态；有待回应的消息先按首回复节奏处理，最后才用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
@@ -10056,6 +10083,7 @@ async function main() {
       return `${base}【唤醒】${key}\n原因：你设置的有限潜水时间已到；在你规定的时间内没有任何一项条件被触发，只是因为时间到了所以你被唤醒。\n你可以查看消息，或继续设置新的唤醒条件。`;
     }
     if (reason === 'replyCheck') {
+      if (cfg.socialV2?.wake?.preSleepWaitEnabled === false) return `${base}【回复检查】${key}：有新消息就回应；否则提交已读水位并结束，不要长等待。`;
       return `${base}【回复检查】${key}\n原因：你刚刚发送过消息，现在回来检查是否有人回复。\n已有回复时先看消息，需要短静默就用 qq_wait_for_messages(purpose="reply") 判断对方是否说完；如果没人回你，不用硬补一句，但也不要立刻潜水——先调用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察：没人说话可收尾；有人说话则查看 newMessages，不需要你参与也可直接收尾（qq_mark_read 或 qq_set_wake_config）。`;
     }
     if (reason === 'proactiveCheck') {
@@ -10064,7 +10092,7 @@ async function main() {
     if (reason === 'poke') {
       return `${base}【唤醒】${key}\n原因：有人拍了一拍（可能拍了你，也可能拍了别人）。\n先看未读/最近消息里的 [拍一拍] 事件：如果是拍你，可以自然回应一句，也可以用 qq_send_poke 回一个拍一拍；如果是拍别人，觉得有趣也可以接梗。除了回应，偶尔也可以主动戳一下正在聊的人/熟人，像真人手贱/提醒/逗一下，但别频繁。不想接就安静收尾（qq_mark_read 或 qq_set_wake_config）。`;
     }
-    return `${base}【唤醒】${key}\n原因：${reason}\n【行动前】先判断：群里在聊什么？热闹还是冷清？有没有人直接找你？对方说完了吗？你有没有真正想说的？\n如果群聊正热但没人叫你，可以插一句有趣的/相关的，插不上再看情况潜水；不要一上来就划走。\n【引用：只在必要时用】只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续的几句话中不同消息指代的是不同的消息或人时，才用 qq_reply 或 qq_send_message 的 replyToMessageId 指向具体那条；其他情况不要引用，别让对方猜。\n你可以调用工具查看未读消息、人设、状态，自行决定是否发言；决定潜水前必须按上面的【沉睡前强制等待】先等够观察窗口。`;
+    return `${base}【唤醒】${key}\n原因：${reason}\n【行动前】先判断：群里在聊什么？热闹还是冷清？有没有人直接找你？对方说完了吗？你有没有真正想说的？\n如果群聊正热但没人叫你，可以插一句有趣的/相关的，插不上再看情况潜水；不要一上来就划走。\n【引用：只在必要时用】只有你这条消息指向的人或消息并非最新一条别人的消息，或者你连续的几句话中不同消息指代的是不同的消息或人时，才用 qq_reply 或 qq_send_message 的 replyToMessageId 指向具体那条；其他情况不要引用，别让对方猜。\n你可以调用工具查看未读消息、人设、状态，自行决定是否发言；收尾遵守上面的等待开关；若为【快速收尾】，直接确认已读并结束。`;
   }
 
   function buildWakeReminderPromptV2(key) {
@@ -10074,6 +10102,7 @@ async function main() {
     const st = getSocialV2State(key);
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
     const preSleepMs = Math.max(0, Number(cfg.socialV2?.wake?.preSleepWaitMs) || 300000);
+    if (cfg.socialV2?.wake?.preSleepWaitEnabled === false) return `${roleLine}${identityLine}${tokenLine}【提醒】观察等待已关闭，请立即用 qq_mark_read 或 qq_set_wake_config 提交已读水位并结束回合，不要长等待。`;
     return `${roleLine}${identityLine}${tokenLine}【提醒】你还没有完成回合收尾。请调用 qq_set_wake_config 设置下一次唤醒条件（例如继续潜水多久、@/名字/关键词/提问/概率/指定成员等），或者调用 qq_mark_read 表示你看过且决定不接。这是为了防止你忘记收尾后进入“永眠”。注意：设置潜水前先用 qq_wait_for_messages(timeoutMs=${preSleepMs}) 完成沉睡前观察；等待期间有人说话时查看 newMessages，判断不需要你参与即可收尾。`;
   }
 
@@ -10210,6 +10239,7 @@ async function main() {
   }
 
   function scheduleReplyCheckV2(key) {
+    if (cfg.socialV2?.autoReplyCheckEnabled === false) return;
     if (cfg.socialV2?.enabled === false) return;
     if (socialV2.paused || currentMode !== 'reserved2') return;
     const st = getSocialV2State(key);
@@ -10555,12 +10585,14 @@ async function main() {
     if (!plainContent && !quoteTargetIsSelf) return;
     const isOwner = String(event.user_id) === String(cfg.ownerQQ ?? '');
     const roleState = readRoleState();
+    if (cfg.localPolicy?.delegation) ownerDelegation.record(key, event);
 
     // 若该会话有挂起的提问/审批，先当作回答处理（用当前消息自己的文字，不含引用原文）。
     // 审批只有管理员消息会被消费；群友消息不能因为“审批挂起”而被吞掉，应继续走正常处理。
     const p = pending.get(key);
-    if (p && (p.kind === 'question' || isOwner)) {
-      await handlePendingAnswer(p, plainContent, key, isOwner);
+    if (p && (p.kind === 'question' || isOwner) && (!p.localDelegation || (isOwner && /^工作(?:答复|批准|拒绝)/.test(plainContent)))) {
+      const answer = p.localDelegation ? plainContent.replace(/^工作答复\s*/, '').replace(/^工作批准$/, '通过').replace(/^工作拒绝$/, '拒绝') : plainContent;
+      await handlePendingAnswer(p, answer, key, isOwner);
       return;
     }
 
@@ -10568,6 +10600,12 @@ async function main() {
     if (roleState.mode === 'silent' && !isOwner) {
       appendActivity(`${key}（静默模式）群友 ${event.user_id}：${textContent.slice(0, 80)}`);
       log(`静默模式，忽略群友消息 ${key}`);
+      return;
+    }
+
+    const nicknameReply = await handleOwnerNickname({ cfg, kind, id, event, request: (action, params) => bot.request(action, params) });
+    if (nicknameReply !== null) {
+      await sendToQQ(key, nicknameReply);
       return;
     }
 
@@ -11050,6 +11088,17 @@ async function main() {
         for await (const envelope of api.events.mux({})) {
           framesThisStream += 1;
           const frame = envelope.payload;
+          const delegated = ownerDelegation.child(frame.sessionId);
+          if (delegated && (frame.type === 'question/requested' || frame.type === 'approval/requested')) {
+            const ownerKey = `private:${cfg.ownerQQ}`;
+            const kind = frame.type === 'question/requested' ? 'question' : 'approval';
+            await registerPending(ownerKey, { ...frame, kind, localDelegation: true, rpcId: envelope.rpcId });
+            const details = kind === 'question'
+              ? frame.questions.map(q => q.question).join('\n') + '\n私聊回复“工作答复 你的回答”，其他消息仍照常聊天。'
+              : `GPT 的 ${frame.toolName || '操作'} 需要授权：${frame.reason || '请确认此操作'}。私聊回复“工作批准”或“工作拒绝”。`;
+            await sendToQQ(ownerKey, details);
+            continue;
+          }
           // 会话开场快照：只喂 token 账本。它含**历史** turn/end，绝不能让它们走
           // session/event 通道 —— 否则桥接会把早已结束的回合当成新回合去发 QQ 回复。
           if (frame.type === 'session/snapshot') {
@@ -11588,9 +11637,9 @@ async function main() {
     // 读取机器人昵称（用于社交模式"被提到"识别）；重连后也会刷新
     bot.getLoginInfo().then((login) => {
       if (login?.nickname) {
-        selfNickname = String(login.nickname).toLowerCase();
-        selfDisplayName = String(login.nickname).trim();
-        log(`机器人昵称: ${login.nickname}`);
+        selfDisplayName = String(cfg.localPolicy?.displayName || login.nickname).trim();
+        selfNickname = selfDisplayName.toLowerCase();
+        log(`机器人昵称: ${selfDisplayName}`);
       }
       if (login?.user_id != null) selfUserId = String(login.user_id);
     }).catch(() => {});
