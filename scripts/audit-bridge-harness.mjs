@@ -3,6 +3,8 @@
 import fs from 'node:fs';
 import { createDelegationAuthority } from '../src/local/delegation-authority.js';
 import * as localPolicy from '../src/local/owner-policy.js';
+import * as dialoguePolicy from '../src/local/dialogue-wake.js';
+import { createProfileActions } from '../src/local/profile-actions.js';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
@@ -164,7 +166,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
     ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...roleCard,
-    createDelegationAuthority, ...localPolicy, ...modelPrices, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt,
+    createDelegationAuthority, createProfileActions, ...localPolicy, ...dialoguePolicy, ...modelPrices, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt,
     // ACL 收紧会 spawn icacls 去改**真实**文件系统；测试不该做这件事（同理见下面的
     // cleanupTemp / processAudioVolume 桩）。桩成成功，让 hardenStateDirAcl 走正常分支。
     hardenDir: () => ({ ok: true, detail: 'stub' }),

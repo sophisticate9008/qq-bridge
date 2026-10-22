@@ -7,7 +7,9 @@
 // 用法：node src/bridge.js （先编辑 ../config.json）
 import fs from 'node:fs';
 import { createDelegationAuthority } from './local/delegation-authority.js';
-import { localWakeReason, ownerIdentityHint, handleOwnerNickname } from './local/owner-policy.js';
+import { localWakeReason, ownerIdentityHint } from './local/owner-policy.js';
+import { createProfileActions } from './local/profile-actions.js';
+import { dialogueWakeReason, renewDialogueAfterReply } from './local/dialogue-wake.js';
 import os from 'node:os';
 import http from 'node:http';
 import path from 'node:path';
@@ -1787,6 +1789,7 @@ async function main() {
     st.recentMessages.push(entry);
     if (st.recentMessages.length > 200) st.recentMessages = st.recentMessages.slice(-200);
     st.lastAiReplyAt = entry.at;
+    renewDialogueAfterReply(cfg, st, entry.at);
     st.lastActionAt = entry.at;
     st.wakeConfig.noActionCount = 0;
     saveSocialV2State();
@@ -2340,6 +2343,9 @@ async function main() {
     allowRemote: cfg.dsh.allowRemote === true
   });
   const ownerDelegation = createDelegationAuthority(ROOT, () => cfg.ownerQQ);
+  const changeNickname = createProfileActions({ root: ROOT, getConfig: () => cfg,
+    ownerMessage: (key, id) => ownerDelegation.ownerMessage(key, id),
+    getBotId: () => selfUserId, request: (action, params) => bot.request(action, params) });
   // DSH 的模型目录 RPC：0.1.5 是 `session/modelCatalog`。**不能走基类门面**
   // `api.sessions.modelCatalog` —— 桥接钉住的 `@deepseek-ai/dsh-host-apiproxy@0.1.1-rc.2`
   // 的 sessions 门面里根本没有这个方法（只有 `models` → 已下线的 `session/models`），
@@ -4612,6 +4618,17 @@ async function main() {
             lastWakeReason: st.lastWakeReason,
             lastAiReplyAt: st.lastAiReplyAt
           });
+          return;
+        }
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/profile/change') {
+          const body = await readBody();
+          const key = String(body.key ?? '');
+          if (!cfg.localPolicy?.nicknameTools || !agentTokenOk(key, req.headers['x-agent-token'])
+              || !v2SessionAllowed(key) || state.sessions[key] !== body.parentId) {
+            sendJson({ ok: false, error: '改名仅限当前已授权 QQ 会话' }, 403); return;
+          }
+          try { sendJson({ ok: true, ...await changeNickname(body) }); }
+          catch (error) { sendJson({ ok: false, error: error.message }, 403); }
           return;
         }
         if (req.method === 'POST' && url.pathname.startsWith('/api/socialV2/delegation/')) {
@@ -9757,6 +9774,7 @@ async function main() {
     const now = Date.now();
     const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
     const list = Array.isArray(messages) ? messages : [];
+    if (list.length) renewDialogueAfterReply(cfg, st, now);
     for (let i = 0; i < list.length; i++) {
       const text = redactKnownTokensOnly(String(list[i] ?? '')).slice(0, 200);
       st.recentMessages.push({
@@ -9882,7 +9900,12 @@ async function main() {
   function evaluateWakeTriggerV2(key, st, event, kind, textContent, plainContent, quoteTargetIsSelf) {
     if (kind === 'private') return 'private';
     const localReason = localWakeReason(cfg, event, plainContent);
+    const atSelf = event.self_id != null && Array.isArray(event.message)
+      && event.message.some(seg => seg?.type === 'at' && String(seg.data?.qq) === String(event.self_id));
+    const direct = atSelf || quoteTargetIsSelf || ['alias', 'ownerNameMention'].includes(localReason);
+    const followupReason = dialogueWakeReason(cfg, st, event, { direct, quoteTargetIsSelf });
     if (localReason) return localReason;
+    if (followupReason) return followupReason;
     const tr = st.wakeConfig?.triggers ?? {};
     if (tr.anyMessage) return 'anyMessage';
     if (tr.atMention) {
@@ -10050,7 +10073,7 @@ async function main() {
     // 避免唤醒 prompt 出现两份黑话表。
     const participationText = formatParticipationV2(st);
     const participationLine = participationText ? `${participationText}\n\n` : '';
-    const antiAiLine = cfg.localPolicy?.ownerAlwaysWake
+    const antiAiLine = cfg.localPolicy?.delegation
       ? '【聊天风格】自然短句、接梗、不用客服套话；主人明确请求认真处理，不装傻敷衍，不故意拖延。工作过程留在内部上下文，群里只按人设说真实结论。\n\n'
       : '【反AI味】你不是客服：不用有求必应，可以装傻、已读乱回、拒绝推荐；少用“一绝/真管用/保证/绝对”这类词。\n\n';
     const stickerCfg = cfg.socialV2?.sticker ?? {};
@@ -10091,6 +10114,9 @@ async function main() {
     const initialPromptText = reason === 'bootstrap' ? formatInitialPromptV2(key) : '';
     const initialPromptLine = initialPromptText ? `${initialPromptText}\n\n` : '';
     const base = roleLine + identityLine + ownerIdentityHint(cfg) + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine;
+    if (reason === 'dialogueFollowup') {
+      return `${base}【续聊机会】${key}\n刚才叫你的人又发来了消息，不必再次 @ 或叫名字。结合连续上下文判断“你好可爱”“这也太厉害了”等是否在接你的话；是的话自然接着聊。若是在和别人说话、换了无关话题、只是在结束聊天或你没有值得补充的内容，可以只标记已读，不必回复。这次唤醒不要求必答，也不意味着允许执行新工作。`;
+    }
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看角色、推荐值、可用工具和状态；有待回应的消息先按首回复节奏处理，最后才用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }
@@ -10314,6 +10340,9 @@ async function main() {
 
   const WAKE_PRIORITY = {
     private: 100,
+    ownerAtMention: 95,
+    ownerNameMention: 95,
+    dialogueFollowup: 85,
     atMention: 90,
     question: 80,
     speaker: 75,
@@ -10600,7 +10629,7 @@ async function main() {
     if (!plainContent && !quoteTargetIsSelf) return;
     const isOwner = String(event.user_id) === String(cfg.ownerQQ ?? '');
     const roleState = readRoleState();
-    if (cfg.localPolicy?.delegation) ownerDelegation.record(key, event);
+    if (cfg.localPolicy?.delegation || cfg.localPolicy?.nicknameTools) ownerDelegation.record(key, event);
 
     // 若该会话有挂起的提问/审批，先当作回答处理（用当前消息自己的文字，不含引用原文）。
     // 审批只有管理员消息会被消费；群友消息不能因为“审批挂起”而被吞掉，应继续走正常处理。
@@ -10615,12 +10644,6 @@ async function main() {
     if (roleState.mode === 'silent' && !isOwner) {
       appendActivity(`${key}（静默模式）群友 ${event.user_id}：${textContent.slice(0, 80)}`);
       log(`静默模式，忽略群友消息 ${key}`);
-      return;
-    }
-
-    const nicknameReply = await handleOwnerNickname({ cfg, kind, id, event, request: (action, params) => bot.request(action, params) });
-    if (nicknameReply !== null) {
-      await sendToQQ(key, nicknameReply);
       return;
     }
 
@@ -10734,12 +10757,12 @@ async function main() {
         return;
       }
       const st = getSocialV2State(key);
+      const reason = evaluateWakeTriggerV2(key, st, event, kind, textContent, plainContent, quoteTargetIsSelf);
       if (!st.bootstrapSent) {
         st.bootstrapSent = true;
         saveSocialV2State();
         scheduleWakeV2(key, 'bootstrap');
       } else {
-        const reason = evaluateWakeTriggerV2(key, st, event, kind, textContent, plainContent, quoteTargetIsSelf);
         if (reason) {
           scheduleWakeV2(key, reason);
         }

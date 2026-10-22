@@ -13,6 +13,13 @@ export function createDelegationAuthority(root, ownerId) {
     fs.renameSync(file + '.tmp', file);
   };
   return {
+    ownerMessage(key, sourceMessageId) {
+      const message = state.messages[`${key}/${sourceMessageId}`];
+      if (!message || message.userId !== String(ownerId()) || Date.now() - message.time > 30 * 60000) {
+        throw new Error('需要当前会话最近 30 分钟内主人本人消息的 messageId');
+      }
+      return { ...message };
+    },
     record(key, event) {
       const id = event.message_id ?? event.msg_id;
       if (String(event.user_id) !== String(ownerId()) || id == null) return;
