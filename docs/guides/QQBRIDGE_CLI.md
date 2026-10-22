@@ -31,7 +31,7 @@ start、stop、restart、status、doctor、logs 都可指定一个组件：
 3. 启动真寻，等待 `127.0.0.1:8080` 就绪。
 4. 启动 SnowLuma，等待 `127.0.0.1:5099` WebUI 就绪。
 5. 启动独立 QQ 客户端，使用本机部署配置里的机器人账号。
-6. 启动 DSH，使用持久化浏览器 Cookie 验证 HTTP 服务。
+6. 启动 DSH，使用持久化浏览器 Cookie 验证 HTTP 和 `session/list` 会话服务；网页能打开不代表模型会话已就绪。
 7. 启动 Bridge，等待其报告 DSH 已连接。
 8. 检查 OneBot QQ 在线状态及账号；未登录时提示到 SnowLuma 检查登录。
 
@@ -79,3 +79,17 @@ qqbridge doctor
 验证命令：`python3 scripts/test-qqbridge-cli.py`。
 此测试使用临时目录和假 screen/健康检查，覆盖启动停止顺序、幂等、失败中止、锁和单组件重启，
 不会操作正在运行的 QQ。实机另外验证了 start 幂等、Bridge/真寻重启、doctor 与 boot status。
+
+## 群里出现“消息未被接受”的排查记录
+
+2026-10-22：DSH 的 `agent-default-model.config.reasoningEffort` 被存为布尔值 `false`，
+但配置要求字符串，因此默认模型插件启动失败，连带 `sessionController` 不可用。
+此时网页和 settings 接口仍正常，旧健康检查误报就绪。
+
+已把值修复为字符串 `'off'`，部署脚本同时维护 DeepSeek provider 和默认模型的这个字段。
+CLI 和桥接现在检查真实会话服务及 RPC 结果；服务不可用时，收到的消息按原有队列机制等待恢复。
+桥接投递拒绝、agent 运行错误仅记在本机日志和控制台活动记录；群聊的重启排队提示、敏感内容拦截通知也不再发送。
+敏感内容的拦截本身仍然生效，不会把原始错误伪装成模型回复。
+
+查看故障：`qqbridge logs dsh`、`qqbridge logs bridge`、`qqbridge doctor`。
+回归测试：`node scripts/test-runtime-diagnostics.mjs`。

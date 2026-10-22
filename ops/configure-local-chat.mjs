@@ -34,6 +34,8 @@ for (const name of ['qq-chat', 'qq-chat-v2']) {
 }
 const deepseek = profile.find(p => p.id === 'llm-deepseek');
 if (deepseek) deepseek.config.reasoningEffort = 'off';
+const defaultModel = profile.find(p => p.id === 'agent-default-model');
+if (defaultModel) defaultModel.config.reasoningEffort = 'off';
 fs.writeFileSync(profileFile, yaml.dump(profile, { lineWidth: 140 }), { mode: 0o600 });
 const roleFile = path.join(root, 'state/current-role.json');
 const role = JSON.parse(fs.readFileSync(roleFile));

@@ -22,6 +22,7 @@ import * as tokenLedger from '../src/token-ledger.js';
 import * as voiceLib from '../src/send-voice-lib.js';
 import * as presetPrompt from '../src/preset-prompt.js';
 import * as stateAcl from '../src/state-acl.mjs';
+import * as roleCard from '../src/role-card.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -79,6 +80,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
       archiveSession: async ({ sessionId }) => { calls.archived.push(sessionId); return success({}); },
     },
     sessions: {
+      list: async () => success([]),
       create: async (params) => { calls.created.push(params); return success({ sessionId: `fixture-${calls.created.length}` }); },
       selectModel: async () => success({ selected: { provider: 'fixture', model: 'fixture' } }),
       prompt: async (params) => { calls.prompts.push(params); return success({}); },
@@ -137,7 +139,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
       selfUserId = String(id ?? '');
       selfNickname = selfDisplayName.toLowerCase() || 'deepseek';
     },
-    flushQueue, retireSession,
+    flushQueue, retireSession, checkDsh, reportRuntimeFailure, auditAndSend,
     voiceCfg, voiceLibrary, resolveVoicePathForV2, resolveVoicePathForOperator,
     voiceBudgetCheck, sendVoiceV2, sendVoiceForV2, assertOutboundAuditOk,
     setMode(value) { currentMode = value; },
@@ -161,7 +163,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     NodeApiClient: class { constructor() { return api; } },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
-    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker,
+    ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...roleCard,
     createDelegationAuthority, ...localPolicy, ...modelPrices, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt,
     // ACL 收紧会 spawn icacls 去改**真实**文件系统；测试不该做这件事（同理见下面的
     // cleanupTemp / processAudioVolume 桩）。桩成成功，让 hardenStateDirAcl 走正常分支。

@@ -41,7 +41,7 @@
 4. **发送强制白名单**：所有发送类工具（`qq_send_group_message` / `qq_send_private_message` / `qq_send_message` / `qq_send_burst` / `qq_reply` / `qq_send_poke` / `qq_send_sticker` / `qq_send_voice` 等）的目标必须命中 `config.json` 的 `allow.groups` / `allow.private`，否则拒绝执行。
    - **语音额外收紧**：`qq_send_voice` 只能发**语音库**（`socialV2.voice.dir`，默认 `qq-bridge/audio/`）里的文件，不能发任意本地路径、URL 或 base64（防 prompt injection 拿本机文件当语音外发）；另有独立的时长/体积/频率上限（`socialV2.voice.*`），额度与文本发送分开计数。详见 [docs/guides/VOICE.md](docs/guides/VOICE.md)。
 5. **发送禁令（模型层）**：persona 明确规定只有「管理端明确指示」或「【管理员】标记的明确要求」才可使用发送工具；禁止写"我已回复/消息已发送（message_id）"类汇报。
-6. **回复审计（桥接层硬拦截）**：agent 回复文本若包含本机路径（`C:\`、`/home/` 等）或凭据特征（token/password/secret/api key 等）→ **整条拦截不发送**，并告知"被安全策略拦截"。
+6. **回复审计（桥接层硬拦截）**：agent 回复文本若包含本机路径（`C:\`、`/home/` 等）或凭据特征（token/password/secret/api key 等）→ **整条拦截不发送**。群聊只留本机日志和控制台记录；私聊可按 `security.interceptNotify` 发送拦截提示。DSH 投递拒绝和 agent 运行错误只记本机，不直接发送到 QQ。
 7. **人格由桥接注入**：角色设定来自 `state/current-role.json` + `roles/<角色>.md`，桥接注入到消息；群友口头要求改角色无效（桥接直接拦截），agent 也无文件工具自行更改。
 8. **静默模式**：`current-role.json` 的 `mode: "silent"` 时，群友消息不再投递给 agent（仅记录日志），只有管理员消息可对话。
 

@@ -47,7 +47,13 @@ const checks = {
     const cookie = discoverDshSessionCookie(cfg.dsh.baseUrl);
     const r = await http(cfg.dsh.baseUrl, { headers: { cookie } });
     await r.body?.cancel();
-    return 'authenticated HTTP ready';
+    const rpc = await http(`${cfg.dsh.baseUrl.replace(/\/+$/, '')}/api/session/list`, {
+      method: 'POST', headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'client-request', rpcId: 'qqbridge-health', method: 'session/list', payload: { args: { _request: {} } } }),
+    });
+    const result = (await rpc.json()).result;
+    if (!result?.ok) throw new Error('DSH 会话服务未就绪（查看 dsh 日志）');
+    return 'authenticated HTTP + session service ready';
   },
   bridge: async () => {
     const token = cfg.consoleToken || fs.readFileSync(path.join(root, 'state/console-token'), 'utf8').trim();

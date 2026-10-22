@@ -2854,7 +2854,9 @@ async function main() {
   const checkDsh = async () => {
     let ok = false;
     try {
-      await api.settings.describe({});
+      unwrap(await api.settings.describe({}), 'settings.describe');
+      // The web UI/settings can stay alive while sessionController failed to load.
+      unwrap(await api.sessions.list({}), 'sessions.list');
       ok = true;
     } catch {}
     if (ok) {
@@ -7877,13 +7879,23 @@ async function main() {
     return roleState.mode === 'silent' && key !== `private:${String(cfg.ownerQQ ?? '')}`;
   }
 
+  // Operational diagnostics belong in local logs/the console, never in QQ chat.
+  function reportRuntimeFailure(key, label, detail) {
+    const raw = String(detail ?? '未知错误');
+    const sensitive = SENSITIVE_RE.test(raw) || [...KNOWN_AGENT_TOKENS].some(t => t && raw.includes(t));
+    const safe = sensitive ? '（含敏感信息，已隐藏）' : raw.slice(0, 500);
+    log(`${label} (${key})：${safe}`);
+    appendActivity(`${key} ${label}：${safe.slice(0, 160)}`);
+    return safe;
+  }
+
   // 统一出站消息：先完整文本审计，再发送。返回是否真的发出。
   async function auditAndSend(key, text) {
     const hasKnownToken = [...KNOWN_AGENT_TOKENS].some((t) => t && String(text ?? '').includes(t));
     if (shouldAuditKey(key) && (SENSITIVE_RE.test(text) || hasKnownToken)) {
       log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`);
       appendActivity(`${key} agent 回复被拦截（疑似敏感信息${hasKnownToken ? '/会话令牌' : ''}）`);
-      if (cfg.security?.interceptNotify !== false) {
+      if (!key.startsWith('group:') && cfg.security?.interceptNotify !== false) {
         await sendToQQ(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。');
       }
       return false;
@@ -8999,8 +9011,7 @@ async function main() {
     if (!accepted.result.ok) {
       if (opts.farewell) social.exitingSessions.delete(sessionId);
       const errText = `${accepted.result.error.code}: ${accepted.result.error.message}`;
-      const safeErrText = shouldAuditKey(key) && SENSITIVE_RE.test(errText) ? '（含敏感信息，已隐藏）' : errText;
-      if (!opts.silent) await sendToQQ(key, `⚠️ 消息未被接受：${safeErrText}`);
+      const safeErrText = reportRuntimeFailure(key, 'DSH 消息投递被拒绝', errText);
       return { ok: false, error: safeErrText };
     }
     if (wakeSnapshot && isCurrentSession(key, sessionId)
@@ -10842,7 +10853,7 @@ async function main() {
       const now = Date.now();
       if ((queuedHintAt.get(key) ?? 0) + QUEUE_HINT_COOLDOWN_MS < now) {
         queuedHintAt.set(key, now);
-        await sendToQQ(key, '⏳ 系统服务重启中，消息已排队，恢复后自动处理。');
+        if (!key.startsWith('group:')) await sendToQQ(key, '⏳ 系统服务重启中，消息已排队，恢复后自动处理。');
       }
       log(`DSH 不可用，消息入队 (${key})`);
       return;
@@ -10871,8 +10882,7 @@ async function main() {
     });
     if (!accepted.result.ok) {
       const errText = `${accepted.result.error.code}: ${accepted.result.error.message}`;
-      const safeErrText = shouldAuditKey(key) && SENSITIVE_RE.test(errText) ? '（含敏感信息，已隐藏）' : errText;
-      await sendToQQ(key, `⚠️ 消息未被接受：${safeErrText}`);
+      reportRuntimeFailure(key, 'DSH 消息投递被拒绝', errText);
       return;
     }
     if (accepted.result.value.command) {
@@ -11342,7 +11352,7 @@ async function main() {
                 if (shouldAuditKey(key) && (SENSITIVE_RE.test(plain) || hasKnownToken)) {
                   log(`⚠️ 回复被安全策略拦截 (${key})，疑似包含敏感信息${hasKnownToken ? '（含会话令牌）' : ''}`);
                   appendActivity(`${key} agent 回复被拦截（疑似敏感信息${hasKnownToken ? '/会话令牌' : ''}）`);
-                  if (cfg.security?.interceptNotify !== false) {
+                  if (!key.startsWith('group:') && cfg.security?.interceptNotify !== false) {
                     await sendToQQ(key, '⚠️ 本条回复因疑似包含敏感信息（路径/凭据/会话令牌）被安全策略拦截，已记录并通知管理员。');
                   }
                   if (isFarewell) {
@@ -11419,11 +11429,7 @@ async function main() {
                 }
               } else if (ended.reason.kind === 'error') {
                 const msg = ended.reason.error?.message ?? '未知错误';
-                const safeMsg = shouldAuditKey(key) && SENSITIVE_RE.test(msg) ? '（含敏感信息，已隐藏）' : msg.slice(0, 500);
-                // 以前这里只发 QQ、不写日志：出问题时 bridge.log 里什么都没有，排查只能靠猜（PR #24）。
-                log(`⚠️ agent 处理出错 (${key})：${safeMsg}`);
-                appendActivity(`${key} agent 处理出错：${safeMsg.slice(0, 80)}`);
-                await sendToQQ(key, `⚠️ agent 处理出错：${safeMsg}`);
+                reportRuntimeFailure(key, 'agent 处理出错', msg);
                 if (isFarewell) {
                   const st = socialState(key);
                   if (st.phase === 'exiting') {
