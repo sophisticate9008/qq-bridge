@@ -1,5 +1,7 @@
 # QQ ↔ DeepSeek Harness 桥接
 
+> 本机部署、目录分类、模型分工和维护说明：[LOCAL_DEPLOYMENT](docs/guides/LOCAL_DEPLOYMENT.md)。本地部署扩展与上游应用源码分开维护。
+
 **English**: [README.en.md](README.en.md) | **中文**: [README.md](README.md)
 
 > 🗂️ 文档索引（全部文档一句话说明 + 是否仍然有效）见 **[docs/README.md](docs/README.md)**；仓库目录/脚本命名约定见 **[docs/FOLDER_MAP.md](docs/FOLDER_MAP.md)**。

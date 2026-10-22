@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "description": "Pinned DSH deployment dependencies; install under dsh/runtime",
+  "dependencies": {
+    "@deepseek-ai/dsh": "0.2.1-rc.2",
+    "pnpm": "10.34.7"
+  }
+}

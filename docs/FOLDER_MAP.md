@@ -1,5 +1,9 @@
 # 仓库目录地图（FOLDER_MAP）
 
+本机新增部署目录：`protocols/`（协议端及独立 QQ）、`integrations/zhenxun/`（真寻接入）、
+`dsh/deployment/`（可公开的 DSH 部署模板）、`ops/`（启动运维）、`config/local/`（私有配置）、
+`runtime/`（私有运行数据）。完整说明见 [本机部署](guides/LOCAL_DEPLOYMENT.md)。
+
 > 一句话说明每个顶层目录干什么、`scripts/` 里的命名约定是什么、哪些脚本像是过期的一次性产物。
 > 本文**只描述现状**，不构成改动指令。文档索引见 [README.md](README.md)。
 >

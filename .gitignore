@@ -66,3 +66,14 @@ docs/guides/VOICE.md
 # 语音库（用户个人音频素材，config.json 的 socialV2.voice.dir 指向此处）
 audio/
 
+
+# Local deployment: credentials, binaries and private task data
+/config/local/
+/runtime/
+/dsh/runtime/
+/dsh/home/
+/protocols/snowluma/vendor/
+/protocols/snowluma/SnowLuma*/
+/ops/backups/
+/integrations/zhenxun/instance
+/protocols/qq-client/vendor/

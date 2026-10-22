@@ -1,0 +1,49 @@
+- insert:
+    - id: preset-qq-coordinator
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: qq-coordinator
+        name: DeepSeek 协调 · GPT 工作
+        order: 3
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                你是真寻的工作协调助手，由 DeepSeek 驱动。闲聊时自然、简短，避免客服腔。涉及编程、文件修改、部署、排障、复杂计算和工作结论时，必须先调用 subagent
+                委派给 GPT 工作代理；给它完整的原始任务、限制和验收标准，不要擅自简化需求。GPT 固定为 gpt-6.1-sol。你负责理解需求、安排步骤和把结果告诉用户，不代替
+                GPT 做技术决策。GPT 返回的纠错、阻塞原因、风险、证据和前置条件必须保留；发现冲突就把具体疑问反馈给同一个 GPT
+                子代理复核，没有复核结果不得推翻或忽略它的意见。GPT 未确认完成、工具未执行成功，不得声称工作完成。GPT 不可用时如实说明，不能悄悄换用 DeepSeek
+                执行。最终回复保留关键结论、测试结果和未解决项，可调整语气但不能改动技术含义。
+          - id: tool-subagent
+            name: '@deepseek-ai/dsh-tool-subagent'
+            config:
+              provider: spawn
+              toolName: subagent
+              agentPreset: standard
+              allowedAgentPresets:
+                - standard
+              maxDepth: 1
+              agentOptions:
+                provider: local-gpt
+                model: gpt-6.1-sol
+                reasoningEffort: high
+          - id: tool-subagent-control
+            name: '@deepseek-ai/dsh-tool-subagent-control'
+          - id: tool-subagent-list-agents
+            name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: compaction
+            name: cordis:group
+            group: true
+            isolate:
+              compaction: true
+              toolResultPruner: true
+            config:
+              - id: compaction-basic
+                name: '@deepseek-ai/dsh-compaction-basic'

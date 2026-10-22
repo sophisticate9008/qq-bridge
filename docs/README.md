@@ -73,3 +73,7 @@
 | 知道某个目录/脚本是干什么的 | [FOLDER_MAP.md](FOLDER_MAP.md) |
 | 权限边界与安全承诺 | [../RULES.md](../RULES.md) |
 | 这个项目要往哪走（QSH） | 上位目录的 `../../QSH-plan/`（总索引 `README.md`；另有工具面/技能/云部署/新仓库与官网四份专项） |
+
+## 本机部署扩展
+
+- [本机部署与长期维护](guides/LOCAL_DEPLOYMENT.md)：有效；目录、模型分工、启动、验证、备份及 Fork 工作流。
