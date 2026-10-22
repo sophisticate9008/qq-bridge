@@ -26,3 +26,16 @@ SELF_NICKNAME="小鲸鱼"
 部分第三方插件可能自带硬编码文本或专用命令，它们不属于 NoneBot 呼叫名。
 QQ 账号展示昵称另由协议端 `set_qq_profile` 修改；`get_login_info` 可能保留旧缓存，
 应同时用 `get_stranger_info(no_cache=true)` 核验资料更新。
+
+## 戳一戳不触发服务器自检
+
+`instance/data/config.yaml` 的 `check.TYPE` 设为 `message`：
+
+```yaml
+check:
+  TYPE: message
+```
+
+真寻内置 check 插件仅在 `poke` / `mix` 时响应戳一戳；`message` 关闭这一触发，
+仍保留主人主动发“自检”的命令。修改后执行 `qqbridge restart zhenxun`。
+无需删除或修改真寻框架代码。QQ 的戳一戳事件仍交给鲸鲸自然聊天或回戳。

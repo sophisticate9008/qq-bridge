@@ -84,6 +84,10 @@ GPT 按 [Responses API](https://developers.openai.com/api/docs/models/gpt-6.1-so
 
 鲸鲸人格保存在 `roles/鲸鲸.md`，参考内置 `roles/小鲸鱼.md` 丰富了性格、喜好、熟人互动和语感示例。
 人格卡只管身份和表达；快速响应、权限和 GPT 委派仍由预设规则控制。
+默认关系是主人养的小鲸鱼和熟悉的群友，重点是聊天、陪伴和互动。
+招呼、叫名字、戳一戳不视为派工；只有主人明确要求执行工作才进入委派。
+“只反馈结果、不直播技术过程”的规则仅约束已有工作，不能套到普通聊天上。
+真寻的 `check.TYPE=message` 已关闭戳一戳自检，避免同一次互动冒出服务器报告。
 二代预设的权威源是 `dsh/agent-presets/qq-chat-v2/agent.cordis.yml`，其中已纳入本机聊天与工作协作规则。
 一代部署前缀仍用 `dsh/deployment/chat-persona.txt`；修改它时如需影响二代，应同步修改二代权威源。
 
