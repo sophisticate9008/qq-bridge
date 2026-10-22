@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+NODE=/usr/local/bin/node
+LOG_DIR="$ROOT/runtime/logs"
+mkdir -p "$LOG_DIR"
+chmod 700 "$LOG_DIR"
+usage() {
+  cat <<'EOF'
+qqbridge [start|stop|restart|status|doctor|logs|console|help] [组件]
+
+不带参数：启动整套机器人。
+组件：zhenxun snowluma qq-client dsh bridge；省略组件表示全部。
+qqbridge start                 启动并检查就绪，已运行组件不会重复启动
+qqbridge stop                  停止机器人组件，保留共享数据库
+qqbridge restart bridge        只重启桥接，保留 QQ 登录和 DSH
+qqbridge restart               重启整个机器人栈
+qqbridge status                查看进程状态
+qqbridge doctor                检查 HTTP、DSH 和 QQ 在线状态
+qqbridge logs bridge           最近 100 行日志；加 -f 持续跟踪
+qqbridge console               显示控制台地址
+EOF
+}
+valid() { case "$1" in zhenxun|snowluma|qq-client|dsh|bridge) return 0;; *) echo "未知组件：$1" >&2; return 2;; esac; }
+screen_name() { case "$1" in qq-client|zhenxun) echo "$1";; *) echo "qq-$1";; esac; }
+running() { screen -ls 2>/dev/null | awk -v name="$(screen_name "$1")" '$1 ~ ("[.]" name "$") { found=1 } END { exit !found }'; }
+ready() { "$NODE" "$ROOT/ops/health.mjs" "$1" --quiet; }
+listening() { "$NODE" "$ROOT/ops/health.mjs" "$1" --listening --quiet; }
+start_one() {
+  local service="$1" deadline
+  if running "$service"; then
+    echo "$service 已运行"
+  else
+    if [[ "$service" == zhenxun ]] && ! ready zhenxun; then
+      if ! sub2api-chroot postgres-status >/dev/null 2>&1; then
+        echo "启动真寻依赖 PostgreSQL…"
+        sub2api-chroot postgres-start || return 1
+      fi
+    fi
+    if [[ "$service" != qq-client ]] && ready "$service"; then
+      echo "$service 服务已就绪（非本命令管理的进程）"
+      return
+    fi
+    if [[ "$service" != qq-client ]] && listening "$service"; then
+      echo "$service 端口已被未就绪的进程占用，请先检查；不会重复启动。" >&2
+      return 1
+    fi
+    echo "启动 $service…"
+    # Do not let long-running screen children inherit the control lock.
+    screen -L -Logfile "$LOG_DIR/$service.log" -dmS "$(screen_name "$service")" "$NODE" "$ROOT/ops/run-service.mjs" "$service" 9>&-
+  fi
+  deadline=$((SECONDS + 90))
+  while (( SECONDS < deadline )); do
+    if ! running "$service"; then
+      echo "$service 进程已退出，查看：qqbridge logs $service" >&2
+      return 1
+    fi
+    # A QQ login UI is a running client; doctor separately checks account login.
+    if [[ "$service" == qq-client ]]; then echo "qq-client 客户端进程已启动"; return; fi
+    if ready "$service"; then echo "$service 已就绪"; return; fi
+    sleep 1
+  done
+  echo "$service 等待就绪超时，查看：qqbridge logs $service" >&2
+  return 1
+}
+stop_one() {
+  local service="$1" deadline
+  if ! running "$service"; then echo "$service 未由 qqbridge 运行"; return; fi
+  screen -S "$(screen_name "$service")" -X quit
+  deadline=$((SECONDS + 30))
+  while (( SECONDS < deadline )); do
+    if ! running "$service"; then
+      if [[ "$service" == qq-client ]] || ! listening "$service"; then echo "$service 已停止"; return; fi
+    fi
+    sleep 1
+  done
+  echo "$service 未完全停止，请检查进程；取消后续重启" >&2
+  return 1
+}
+start_all() {
+  local service
+  screen -wipe >/dev/null 2>&1 || true
+  for service in zhenxun snowluma qq-client dsh bridge; do start_one "$service" || return; done
+  if ready qq-client; then echo "机器人栈已就绪，QQ 在线";
+  else echo "服务已启动，QQ 尚未在线；请在 SnowLuma 控制台检查登录：http://127.0.0.1:5099"; fi
+}
+stop_all() { local service; for service in bridge dsh qq-client snowluma zhenxun; do stop_one "$service" || return; done; }
+command="${1:-start}"
+component="${2:-}"
+case "$command" in
+  help|-h|--help) usage; exit 0;;
+  console) printf '%s\n' 'Bridge: http://127.0.0.1:3100' 'DSH: http://127.0.0.1:3080' 'SnowLuma: http://127.0.0.1:5099'; exit 0;;
+  start|stop|restart|status|doctor|logs) ;;
+  *) usage >&2; exit 2;;
+esac
+[[ -z "$component" ]] || valid "$component"
+case "$command" in
+  status)
+    for service in ${component:-zhenxun snowluma qq-client dsh bridge}; do
+      if running "$service"; then printf '%-10s running\n' "$service"; else printf '%-10s stopped\n' "$service"; fi
+    done;;
+  doctor) exec "$NODE" "$ROOT/ops/health.mjs" "${component:-all}";;
+  logs)
+    service="${component:-bridge}"
+    logfile="$LOG_DIR/$service.log"
+    if [[ "$service" == zhenxun && ! -f "$logfile" ]]; then logfile=/root/service_boot/logs/zhenxun.log; fi
+    [[ -f "$logfile" ]] || { echo "尚无日志：$service" >&2; exit 1; }
+    if [[ "${3:-}" == -f ]]; then exec tail -n 100 -F "$logfile";
+    elif [[ -n "${3:-}" ]]; then usage >&2; exit 2;
+    else exec tail -n 100 "$logfile"; fi;;
+  start|stop|restart)
+    exec 9>"$ROOT/runtime/qqbridge-control.lock"
+    flock -n 9 || { echo '另一个 qqbridge 启停操作正在进行，请稍后再试。' >&2; exit 1; }
+    case "$command" in
+      start) if [[ -n "$component" ]]; then start_one "$component"; else start_all; fi;;
+      stop) if [[ -n "$component" ]]; then stop_one "$component"; else stop_all; fi;;
+      restart)
+        if [[ -n "$component" ]]; then stop_one "$component"; start_one "$component";
+        else stop_all; start_all; fi;;
+    esac;;
+esac

@@ -77,3 +77,4 @@
 ## 本机部署扩展
 
 - [本机部署与长期维护](guides/LOCAL_DEPLOYMENT.md)：有效；目录、模型分工、启动、验证、备份及 Fork 工作流。
+- [qqbridge 命令与 boot 启动流程](guides/QQBRIDGE_CLI.md)：整套启动、单组件重启、健康检查、日志和安装迁移。

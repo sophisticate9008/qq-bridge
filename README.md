@@ -1,6 +1,6 @@
 # QQ ↔ DeepSeek Harness 桥接
 
-> 本机部署、目录分类、模型分工和维护说明：[LOCAL_DEPLOYMENT](docs/guides/LOCAL_DEPLOYMENT.md)。本地部署扩展与上游应用源码分开维护。
+> 本机部署、目录分类、模型分工和维护说明：[LOCAL_DEPLOYMENT](docs/guides/LOCAL_DEPLOYMENT.md)。本地部署扩展与上游应用源码分开维护。启动入口：`qqbridge`；[CLI 与 boot 流程](docs/guides/QQBRIDGE_CLI.md)。
 
 **English**: [README.en.md](README.en.md) | **中文**: [README.md](README.md)
 

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const service = process.argv[2];
+const deployment = JSON.parse(fs.readFileSync(`${root}/config/local/deployment.json`));
 const env = {
   ...process.env,
   PATH: `/usr/local/bin:${root}/dsh/runtime/node_modules/.bin:${process.env.PATH}`,
@@ -13,12 +14,13 @@ const env = {
   DSH_INSTALL_MODULES: `${root}/dsh/runtime/node_modules`,
 };
 const commands = {
+  zhenxun: [`${deployment.zhenxunPath}/.venv/bin/zx`, [], deployment.zhenxunPath],
   dsh: [process.execPath, [`${root}/dsh/runtime/node_modules/@deepseek-ai/dsh/lib/bin.js`, 'web', '--host', '127.0.0.1', '--port', '3080', '--no-open'], root],
   bridge: [process.execPath, [`${root}/src/bridge.js`], root],
   snowluma: [process.execPath, ['index.mjs'], `${root}/protocols/snowluma/vendor`],
   'qq-client': ['xvfb-run', ['-a', `${root}/protocols/qq-client/vendor/qq`, '--no-sandbox', '-q', String(JSON.parse(fs.readFileSync(`${root}/config/local/deployment.json`)).botQQ)], root],
 };
-if (!commands[service]) throw new Error('Service must be dsh, bridge, snowluma or qq-client');
+if (!commands[service]) throw new Error('Service must be zhenxun, dsh, bridge, snowluma or qq-client');
 if (service === 'snowluma') {
   env.SNOWLUMA_ACCEPT_EULA = '1';
   env.SNOWLUMA_ACCEPT_PRIVACY = '1';

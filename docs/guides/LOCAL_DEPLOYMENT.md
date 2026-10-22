@@ -38,7 +38,7 @@ QQ 客户端 → SnowLuma
 DSH 使用本地浏览器会话 Cookie；不要把带登录 token 的 URL 写到公开文档或日志报告里。
 
 真寻本体、插件和数据库保留原位。主机 `/root/service_boot/service-boot.sh`
-已把 NapCat 的自动启动换成 `ops/stack.sh start`，备份位于 `ops/backups/`。
+已把 NapCat 的启动换成 `qqbridge start`，真寻也统一纳入 qqbridge，备份位于 `ops/backups/`。
 原 NapCat 文件保留，运行进程已经停止。
 
 ## 模型分工
@@ -94,16 +94,26 @@ GPT 按 [Responses API](https://developers.openai.com/api/docs/models/gpt-6.1-so
 ## 运维
 
 ```bash
-cd /root/qq-bridge
-./ops/stack.sh status
-./ops/stack.sh start
-./ops/stack.sh stop
-./ops/stack.sh restart
+qqbridge                    # 单独启动完整机器人栈
+qqbridge status             # screen 进程状态
+qqbridge doctor             # HTTP、DSH、QQ 在线与账号校验
+qqbridge restart bridge     # 只更新桥接，不重启 QQ
+qqbridge restart dsh        # 只重启 DSH
+qqbridge logs bridge -f     # 跟踪日志
+qqbridge stop               # 停止机器人组件，包括真寻
+boot                        # 主机完整服务流程，也调用 qqbridge
 ```
 
-`start` 不重复启动已有 screen 会话；`restart` 会中断正在运行的会话，并可能需要重新扫码。
-进程管理使用 screen，适合当前没有 systemd 的主机；进程崩溃后需要重新 start，尚无自动守护重启。
-真寻由原主机启动脚本管理，不包含在 stack 的 stop 内。
+统一入口为 `/usr/local/bin/qqbridge`，链接到 `ops/qqbridge`；`ops/stack.sh` 保留兼容转发。
+首次安装或恢复 boot 接入：`python3 ops/install-qqbridge.py`，脚本可重复运行并备份 boot。
+完整顺序是 PostgreSQL（必要时）→ 真寻 → SnowLuma → QQ 客户端 → DSH → Bridge。
+停止按反向组件顺序进行，共享 PostgreSQL 不由 qqbridge 停止。
+启动会等待就绪，失败中止后续步骤；QQ 客户端已启动但未登录会明确显示“尚未在线”。
+`doctor` 对未就绪/未登录返回非零退出码；`status` 只展示进程状态。
+
+`start` 不重复启动已有 screen 会话；完整 `restart` 会中断运行中的任务，并可能需要重新扫码。
+日常优先单组件重启。进程崩溃后需要重新 start，目前没有后台 watchdog。
+更多用法见 [QQBRIDGE_CLI](QQBRIDGE_CLI.md)。
 
 日志位于 `runtime/logs/`。QQ 登录截图为 `runtime/qq-login-scan.png` 和 `runtime/qq-login.png`，
 是抓取时的静态图片，二维码过期需要刷新重新截图。
