@@ -72,6 +72,8 @@ SnowLuma 的 `config/local/deployment.json` 设置 `snowlumaWebHost: "0.0.0.0"`�
 当前内网地址：Bridge `http://192.168.1.66:3100`，SnowLuma `http://192.168.1.66:5099`。
 仍使用原有控制台令牌或登录凭据。Bridge 允许本机网卡 IPv4 地址作为 Host/Origin，
 仍拒绝任意域名、其他 IP 和无令牌的管理 API 请求。
+本 Fork 的自定义控制台令牌支持 10–128 位字母、数字、下划线和短横线；
+前端、服务端和 MCP 读取校验保持一致。实际令牌只存私有配置，不写入文档或 Git。
 按用户要求，DSH 保持 `127.0.0.1:3080`，没有内网转发入口。
 以上设置随 `boot` / `qqbridge` 启动生效；内网 IP 变化时使用新的网卡地址访问。
 

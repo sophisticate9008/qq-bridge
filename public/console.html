@@ -2502,7 +2502,7 @@ button:active:not(:disabled) {
 <section id="section-token" data-page="access" class="card">
       <h2>控制台访问令牌</h2>
       <div class="meta">用于打开本控制台 / 调用管理 API 的令牌。可手动输入新令牌保存，或留空生成随机令牌。修改后当前页面会自动使用新令牌。</div>
-      <input type="password" id="consoleTokenInput" placeholder="输入新令牌（至少 16 位），留空则生成随机" autocomplete="new-password">
+      <input type="password" id="consoleTokenInput" placeholder="输入新令牌（至少 10 位），留空则生成随机" autocomplete="new-password">
       <div class="row" style="margin-top:8px">
         <button id="consoleTokenSave" class="small">保存令牌</button>
         <button id="consoleTokenRandom" class="small">生成随机令牌</button>
@@ -4402,8 +4402,8 @@ async function changeConsoleToken(generate) {
   const input = document.getElementById('consoleTokenInput');
   const msg = document.getElementById('consoleTokenMsg');
   const token = generate ? '' : input.value.trim();
-  if (!generate && token && token.length < 16) {
-    msg.textContent = '❌ 令牌至少需要 16 位';
+  if (!generate && token && token.length < 10) {
+    msg.textContent = '❌ 令牌至少需要 10 位';
     msg.className = 'meta err';
     return;
   }

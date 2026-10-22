@@ -112,14 +112,14 @@ function readConsoleToken() {
   // 每次请求都重新读取，优先 config.json 里的 consoleToken，其次 state/console-token，
   // 避免 token 变化后 MCP 仍使用启动时缓存的旧值导致一直 401。
   //
-  // 必须与桥接的校验口径**完全一致**（bridge.js 的 startConsoleServer：长度 16~128、
+  // 必须与桥接的校验口径**完全一致**（bridge.js 的 startConsoleServer：长度 10~128、
   // 只允许 [A-Za-z0-9_-]，不合法就忽略并回退 state/console-token）。否则用户手填一个
   // 短令牌时桥接会正常运行，而 MCP 拿着这个桥接根本不认的值去请求 —— 每个工具都 401，
   // 且错误信息里看不出原因是"config.json 里的令牌格式不合法"。
   try {
     const c = getConfig();
     const configured = String(c.consoleToken ?? '').trim();
-    if (/^[A-Za-z0-9_-]{16,128}$/.test(configured)) return configured;
+    if (/^[A-Za-z0-9_-]{10,128}$/.test(configured)) return configured;
   } catch {}
   try {
     const tokenFile = path.join(ROOT, 'state', 'console-token');

@@ -3089,7 +3089,7 @@ async function main() {
     // 控制台鉴权：优先用 config.consoleToken，未配置则自动生成并持久化，不再默认无鉴权。
     // 使用 let 以便控制台内手动修改令牌后热更新。
     const configuredToken = String(cfg.consoleToken ?? '').trim();
-    const tokenValid = configuredToken.length >= 16 && configuredToken.length <= 128 && /^[A-Za-z0-9_-]+$/.test(configuredToken);
+    const tokenValid = configuredToken.length >= 10 && configuredToken.length <= 128 && /^[A-Za-z0-9_-]+$/.test(configuredToken);
     let consoleToken = tokenValid ? configuredToken : loadOrCreateConsoleToken();
     // 令牌必须非空才继续。下面鉴权处原来的写法是「令牌为空 ⇒ return true（放行）」，
     // 注释写着"启动时已自动生成并持久化"—— 等于承认那一行不可达，可它是一条**失败开放**的分支：
@@ -4159,8 +4159,8 @@ async function main() {
           if (generated) {
             newToken = crypto.randomBytes(24).toString('hex');
           }
-          if (newToken.length < 16) {
-            sendJson({ ok: false, error: '控制台访问令牌至少需要 16 位；留空可生成随机令牌' }, 400);
+          if (newToken.length < 10) {
+            sendJson({ ok: false, error: '控制台访问令牌至少需要 10 位；留空可生成随机令牌' }, 400);
             return;
           }
           if (newToken.length > 128) {
