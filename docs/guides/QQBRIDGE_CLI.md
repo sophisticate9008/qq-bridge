@@ -49,6 +49,7 @@ QQ 登录需要手机操作时，服务启动本身可以完成；`doctor` 会�
 
 主机入口 `/usr/local/bin/boot` 仍执行 `/root/service_boot/service-boot.sh`。
 主机流程先启动已有公共依赖，再调用 `qqbridge start`；不再单独重复启动真寻，也不启动 NapCat。
+NapCat 的旧启动函数、停止步骤和日志入口也已移除；重新运行安装脚本会同步清理这些残留。
 
 ```bash
 boot                    # 主机整套服务，包括 qqbridge

@@ -3,6 +3,7 @@
 from pathlib import Path
 from datetime import datetime
 import shutil
+import re
 
 root = Path(__file__).resolve().parent.parent
 boot = Path('/root/service_boot/service-boot.sh')
@@ -35,6 +36,18 @@ if 'qqbridge|bridge|dsh|snowluma|qq-client|zhenxun)' not in updated:
 ''', 1)
 updated = updated.replace('logs {sub2api|zhenxun|gscore|napcat|', 'logs {qqbridge|bridge|dsh|snowluma|qq-client|zhenxun|sub2api|gscore|napcat|')
 updated = updated.replace('    restart)\n        stop_all\n        start_all', '    restart)\n        stop_all || exit $?\n        start_all')
+# Remove the retired protocol's entrypoints as well as its old startup call.
+updated = re.sub(r'^start_napcat\(\) \{\n.*?^\}\n\n?', '', updated, flags=re.M | re.S)
+updated = re.sub(r'^NAPCAT_DIR=.*\n', '', updated, flags=re.M)
+updated = updated.replace('    start_napcat || failed_services+=("napcat")\n', '')
+updated = updated.replace('    stop_screen napcat\n', '')
+updated = updated.replace('        napcat)\n            screen -r napcat\n            ;;\n', '')
+updated = updated.replace('|napcat|', '|')
+# QQ_NUMBER belonged to the old NapCat command; retain it if still referenced.
+if not re.search(r'\$(?:QQ_NUMBER\b|\{QQ_NUMBER\b)', updated):
+    updated = re.sub(r'^QQ_NUMBER=.*\n', '', updated, flags=re.M)
+if re.search(r'napcat', updated, flags=re.I):
+    raise SystemExit('boot shape changed: unrecognized NapCat reference remains')
 # Fail before modifying either entrypoint if the expected boot shape has changed.
 for entry in ['start', 'stop', 'status']:
     if f'{cli} {entry}' not in updated:
