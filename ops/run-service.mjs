@@ -22,6 +22,7 @@ const commands = {
 };
 if (!commands[service]) throw new Error('Service must be zhenxun, dsh, bridge, snowluma or qq-client');
 if (service === 'snowluma') {
+  env.SNOWLUMA_WEBUI_HOST = deployment.snowlumaWebHost || '127.0.0.1';
   env.SNOWLUMA_ACCEPT_EULA = '1';
   env.SNOWLUMA_ACCEPT_PRIVACY = '1';
 }

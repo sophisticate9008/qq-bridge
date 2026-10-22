@@ -62,6 +62,19 @@ boot logs zhenxun       # 跟踪真寻日志
 `boot restart` 若停止失败则中止，避免带着残留进程重复启动。
 这是现有 boot 命令内的流程；不额外安装 systemd、自启动任务或后台守护。
 
+## 内网控制台
+
+本机配置：Bridge 的 `config.json` 设置 `consoleHost: "0.0.0.0"`；
+SnowLuma 的 `config/local/deployment.json` 设置 `snowlumaWebHost: "0.0.0.0"`，
+由启动器传入官方 `SNOWLUMA_WEBUI_HOST` 环境变量。未设置时均默认只监听回环地址。
+修改后分别运行 `qqbridge restart bridge`、`qqbridge restart snowluma`。
+
+当前内网地址：Bridge `http://192.168.1.66:3100`，SnowLuma `http://192.168.1.66:5099`。
+仍使用原有控制台令牌或登录凭据。Bridge 允许本机网卡 IPv4 地址作为 Host/Origin，
+仍拒绝任意域名、其他 IP 和无令牌的管理 API 请求。
+按用户要求，DSH 保持 `127.0.0.1:3080`，没有内网转发入口。
+以上设置随 `boot` / `qqbridge` 启动生效；内网 IP 变化时使用新的网卡地址访问。
+
 ## 安装与维护
 
 ```bash

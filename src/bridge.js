@@ -692,6 +692,7 @@ function loadConfig() {
     sendDelayMs: file.sendDelayMs ?? 300,
     questionTimeoutMs: file.questionTimeoutMs ?? 5 * 60 * 1000,
     consolePort: file.consolePort ?? 3100,
+    consoleHost: file.consoleHost ?? '127.0.0.1',
     consoleToken: file.consoleToken ?? '',
     // 价目表覆盖项（可选）。留空即用 src/model-prices.js 的官方默认价。
     pricing: file.pricing ?? null,
@@ -3084,6 +3085,7 @@ async function main() {
 
   function startConsoleServer() {
     const port = cfg.consolePort ?? 3100;
+    const host = cfg.consoleHost ?? '127.0.0.1';
     // 控制台鉴权：优先用 config.consoleToken，未配置则自动生成并持久化，不再默认无鉴权。
     // 使用 let 以便控制台内手动修改令牌后热更新。
     const configuredToken = String(cfg.consoleToken ?? '').trim();
@@ -3211,16 +3213,18 @@ async function main() {
         res.end();
         return;
       }
-      // Host 头校验（DNS rebinding 硬化）：控制台只监听 127.0.0.1，因此合法请求的 Host
-      // 只可能是 127.0.0.1 / localhost / [::1] 加本端口。攻击者用一个 TTL=0 的域名解析到
-      // 127.0.0.1 时，浏览器会把 evil.com:3100 当作同源，Origin 校验随之失效；卡住 Host
-      // 这一层后，这类请求在进入任何业务分支之前就被拒掉。
-      // 反代/端口转发场景会被一并拒绝——这是有意的（要远程访问请用 SSH 隧道并自行承担）。
+      // Keep DNS-rebinding protection when explicitly listening on LAN:
+      // accept local interface IP literals, never arbitrary Host domains.
       const hostHeader = String(req.headers.host ?? '');
       // 用**实际绑定端口**而不是配置值：测试夹具用 consolePort: 0 让系统分配端口，
       // 配置里那个 0 不是请求里的 Host 端口。请求必然发生在 listen 之后，所以这里拿得到。
       const boundPort = server.address()?.port ?? port;
       const allowedHosts = [`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`];
+      if (host === '0.0.0.0') {
+        for (const entry of Object.values(os.networkInterfaces()).flat()) {
+          if (entry?.family === 'IPv4') allowedHosts.push(`${entry.address}:${boundPort}`);
+        }
+      }
       if (!allowedHosts.includes(hostHeader.toLowerCase())) {
         sendJson({ ok: false, error: `Host 头不被允许（${hostHeader || '缺失'}）：控制台只接受本机回环访问` }, 403);
         return;
@@ -3294,7 +3298,7 @@ async function main() {
         if (origin) {
           let originHost = '';
           try { originHost = new URL(String(origin)).host; } catch {}
-          if (![`127.0.0.1:${boundPort}`, `localhost:${boundPort}`, `[::1]:${boundPort}`].includes(originHost)) {
+          if (!allowedHosts.includes(originHost.toLowerCase())) {
             sendJson({ ok: false, error: '跨站请求被拒绝' }, 403);
             return;
           }
@@ -7071,8 +7075,8 @@ async function main() {
         sendJson({ ok: false, error: error?.message ?? String(error) }, status);
       }
     });
-    server.listen(port, '127.0.0.1', () => {
-      log(`本地控制台已启动：http://127.0.0.1:${port}`);
+    server.listen(port, host, () => {
+      log(`控制台已启动：http://${host}:${port}`);
     });
     // 端口被占用说明已有实例在跑：以 exit 2 退出，守护脚本会识别为"已有实例"而不是无限重启
     server.on('error', (error) => {
