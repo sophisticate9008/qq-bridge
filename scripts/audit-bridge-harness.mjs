@@ -128,7 +128,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     getSocialV2State, appendSocialV2Message, recordSentMessagesV2,
     evaluateWakeTriggerV2, buildWakePromptV2, buildWakeSnapshotV2, sendWakePromptV2, socialV2,
     refreshMode, modeAllowed, trackTurnEvent, replayPendingWakeReasonsV2,
-    collectors, setupSleepTimerV2,
+    collectors, setupSleepTimerV2, recordSessionUsage, recordSessionSnapshot, isMissingLearnerSessionError,
     getInitialPrompt, setInitialPrompt, loadInitialPrompts, formatInitialPromptV2,
     initialPrompts, initialPromptMaxChars,
     extractMediaFromSegments, segmentsToText, fetchOneBotImage, fetchMediaData, resolveMediaList,

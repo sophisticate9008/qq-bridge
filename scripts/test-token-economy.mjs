@@ -412,6 +412,73 @@ await test('busy and rate-limited wake attempts preserve the current observation
   assert.equal(h.calls.prompts.length, 0);
 });
 
+await test('learner transport and turn failures do not falsely declare its session missing', async ({ h }) => {
+  for (const message of ['等待学习会话 turn 超时(120000ms)', '学习会话 turn 未正常完成：error', 'web fetch 404 not found', 'Connection error.']) {
+    assert.equal(h.isMissingLearnerSessionError(new Error(message)), false);
+  }
+  assert.equal(h.isMissingLearnerSessionError({ code: 'session/not-found' }), true);
+  assert.equal(h.isMissingLearnerSessionError(new Error('session "abc" not found')), true);
+});
+
+await test('accepted wake policy is reused while fresh messages, token and state remain present', async ({ h, st, append }) => {
+  h.cfg.socialV2.context.deduplicateWakePolicy = true;
+  append('first message');
+  await h.deliverPrompt(KEY, '', { wakeReason: 'question' });
+  const first = h.calls.prompts.at(-1).content[0].text;
+  append('second fresh message');
+  await h.deliverPrompt(KEY, '', { wakeReason: 'question' });
+  const second = h.calls.prompts.at(-1).content[0].text;
+  assert.match(first, /【积极性】/);
+  assert.doesNotMatch(second, /【积极性】/);
+  assert.match(second, /【沿用规则】/);
+  assert.ok(second.includes(st.agentToken));
+  assert.ok(second.includes('second fresh message'));
+  assert.match(second, /【当前唤醒】/);
+  assert.match(second, /【首回复节奏】/);
+  assert.ok(second.length < first.length, 'fresh messages must not erase policy savings');
+  h.cfg.socialV2.wake.preSleepWaitEnabled = true;
+  await h.deliverPrompt(KEY, '', { wakeReason: 'question' });
+  assert.match(h.calls.prompts.at(-1).content[0].text, /【沉睡前强制等待】/);
+});
+
+await test('reconnect, compaction, policy changes and new sessions restore full wake policy', async ({ h, append }) => {
+  h.cfg.socialV2.context.deduplicateWakePolicy = true;
+  append('message');
+  const send = async () => { await h.deliverPrompt(KEY, '', { wakeReason: 'question' }); return h.calls.prompts.at(-1).content[0].text; };
+  await send(); assert.match(await send(), /【沿用规则】/);
+  h.recordSessionSnapshot(h.state.sessions[KEY], {});
+  assert.match(await send(), /【积极性】/);
+  assert.match(await send(), /【沿用规则】/);
+  h.recordSessionUsage(h.state.sessions[KEY], { type: 'compaction/summary', data: {} });
+  assert.match(await send(), /【积极性】/);
+  assert.match(await send(), /【沿用规则】/);
+  h.setSelfIdentity('新名字', '123');
+  assert.match(await send(), /新名字/);
+  assert.match(await send(), /【沿用规则】/);
+  h.retireSession(KEY);
+  assert.match(await send(), /【积极性】/);
+});
+
+await test('rejected or concurrently compacted deliveries never establish a policy cache', async ({ h, append }) => {
+  h.cfg.socialV2.context.deduplicateWakePolicy = true;
+  append('message');
+  const original = h.api.sessions.prompt;
+  h.api.sessions.prompt = async params => {
+    h.calls.prompts.push(params);
+    return { result: { ok: false, error: { code: 'FIXTURE_REJECT', message: 'fixture rejection' } } };
+  };
+  await h.deliverPrompt(KEY, '', { wakeReason: 'question' });
+  h.api.sessions.prompt = async params => {
+    h.recordSessionUsage(params.sessionId, { type: 'compaction/start', data: {} });
+    return original(params);
+  };
+  await h.deliverPrompt(KEY, '', { wakeReason: 'question' });
+  assert.match(h.calls.prompts.at(-1).content[0].text, /【积极性】/);
+  h.api.sessions.prompt = original;
+  await h.deliverPrompt(KEY, '', { wakeReason: 'question' });
+  assert.match(h.calls.prompts.at(-1).content[0].text, /【积极性】/);
+});
+
 await test('a rejected prompt does not authorize the undelivered snapshot', async ({ h, st, request, append }) => {
   append('rejected snapshot');
   h.api.sessions.prompt = async (params) => {

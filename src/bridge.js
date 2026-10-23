@@ -1380,6 +1380,11 @@ function canonicalV2Key(key) {
 const APPROVE_WORDS = new Set(['通过', '同意', '允许', '批准', 'yes', 'y', 'approve', 'ok']);
 const REJECT_WORDS = new Set(['拒绝', '不同意', '不允许', '驳回', 'no', 'n', 'reject', 'deny']);
 
+function isMissingLearnerSessionError(error) {
+  return error?.code === 'session/not-found'
+    || /session\/not-found|\bsession\b.{0,160}\bnot found\b|会话.{0,80}不存在/i.test(String(error?.message ?? error));
+}
+
 // state/ 的 ACL 是否已收紧（hardenStateDirAcl 的结果；控制台「访问与安全」页会显示，
 // 未收紧时给出可复制的提权命令）。null = 还没跑/平台不适用。
 let stateDirHardened = null;
@@ -1411,6 +1416,14 @@ async function main() {
   const learnerSessions = new Set();    // sessionId -> 学习会话（不映射 QQ，不发送）
   const learnerCollectors = new Map();  // sessionId -> turn collector
   const learnerWaiters = new Map();     // sessionId -> [{resolve,reject,timer}]
+  // Only accepted prompts establish policy in a session's durable context.
+  // Reconnects and compaction invalidate this hint; never persist it across boots.
+  const wakePolicyCache = new Map();
+  let wakePolicyEpoch = 0;
+  function invalidateWakePolicyV2(sessionId) {
+    wakePolicyCache.delete(sessionId);
+    wakePolicyEpoch++;
+  }
   let slangLearnerSessionId = null;
   let slangTaskChain = Promise.resolve();
 
@@ -2171,7 +2184,7 @@ async function main() {
         queueSlangTask(() => runSlangResearch(researchCandidates));
       }
     } catch (error) {
-      if (/会话|session|not found|404/i.test(String(error?.message ?? error))) {
+      if (isMissingLearnerSessionError(error)) {
         invalidateSlangLearnerSession();
       }
       log(`黑话提取失败 (${key}):`, error?.message ?? error);
@@ -2223,7 +2236,7 @@ async function main() {
       saveSlangStore();
       log(`黑话研究：已更新 ${results.length} 条候选解释`);
     } catch (error) {
-      if (/会话|session|not found|404/i.test(String(error?.message ?? error))) {
+      if (isMissingLearnerSessionError(error)) {
         invalidateSlangLearnerSession();
       }
       log('黑话研究失败:', error?.message ?? error);
@@ -2425,6 +2438,7 @@ async function main() {
 
   /** 摄入一条会话事件到 token 账本；任何异常都不能影响 QQ 主链路。 */
   function recordSessionUsage(sessionId, event) {
+    if (event?.type?.startsWith('compaction/')) invalidateWakePolicyV2(sessionId);
     try {
       if (event?.type === 'model/selection') rememberModel(sessionId, event.data);
       const known = sessionModels.get(sessionId);
@@ -2446,6 +2460,7 @@ async function main() {
    * 重连时该帧会重新下发，账本内部按 (turn, step, retry) + seq 做幂等折叠，不会翻倍。
    */
   function recordSessionSnapshot(sessionId, snapshot) {
+    invalidateWakePolicyV2(sessionId);
     try {
       if (!snapshot) return;
       const selection = snapshot.projections?.values?.modelSelection;
@@ -2738,6 +2753,7 @@ async function main() {
     // 但从未成功建过会话的 key 同样会留下限流时间戳与失败标记。
     forgetConversationCaches(key);
     if (!sessionId) return;
+    invalidateWakePolicyV2(sessionId);
     reverse.delete(sessionId);
     collectors.delete(sessionId);
     sessionModels.delete(sessionId);
@@ -9002,13 +9018,18 @@ async function main() {
     let wakeState;
     let wakeToken;
     let wakeSnapshot;
+    let wakePolicy;
+    const policyEpoch = wakePolicyEpoch;
     if (opts.wakeReason) {
       if (wakeBlocked()) return skipWake();
       // Build only after session creation: retries may rotate the token, and an
       // offline queue may have received more messages since this wake was queued.
       wakeState = getSocialV2State(key);
       wakeToken = wakeState.agentToken;
-      promptText = buildWakePromptV2(key, opts.wakeReason);
+      promptText = buildWakePromptV2(key, opts.wakeReason, {
+        knownPolicy: wakePolicyCache.get(sessionId),
+        rememberPolicy: (policy) => { wakePolicy = policy; },
+      });
       wakeSnapshot = buildWakeSnapshotV2(key);
       if (wakeSnapshot) {
         promptText += `\n\n【本次消息快照】\n${JSON.stringify(wakeSnapshot)}\n以上消息已提供，无需重复查询；partial=true 时用 qq_get_unread_messages(afterSeq=readThroughSeq) 继续读取。先处理当前消息；回复前如需确认后续补充，用 qq_wait_for_messages(purpose="reply") 补足短静默，已安静够久会立即返回，不要先长等。收尾只确认你已处理的 readThroughSeq（本地 seq，非 QQ messageId），传给 qq_mark_read 或 qq_set_wake_config 的 throughSeq；新到消息留待处理。`;
@@ -9034,6 +9055,11 @@ async function main() {
       const errText = `${accepted.result.error.code}: ${accepted.result.error.message}`;
       const safeErrText = reportRuntimeFailure(key, 'DSH 消息投递被拒绝', errText);
       return { ok: false, error: safeErrText };
+    }
+    if (wakePolicy && policyEpoch === wakePolicyEpoch && isCurrentSession(key, sessionId)
+        && socialV2.conversations.get(canonicalV2Key(key)) === wakeState
+        && wakeState.agentToken === wakeToken) {
+      wakePolicyCache.set(sessionId, wakePolicy);
     }
     if (wakeSnapshot && isCurrentSession(key, sessionId)
         && socialV2.conversations.get(canonicalV2Key(key)) === wakeState
@@ -10061,7 +10087,7 @@ async function main() {
     return `【你的身份】你在 QQ 上的昵称是${label}${idText}。${callBits}；群名片可能与昵称不同，at/引用段里带${id ? ` ${id} ` : '你的 QQ 号'}就是在叫你。\n\n`;
   }
 
-  function buildWakePromptV2(key, reason) {
+  function buildWakePromptV2(key, reason, { knownPolicy, rememberPolicy } = {}) {
     const roleState = readRoleState();
     const roleLine = roleState.role ? `【当前角色】${roleState.role}（完整角色卡请调用 qq_get_prompt 查看）\n\n` : '';
     const identityLine = selfIdentityTextV2();
@@ -10113,7 +10139,16 @@ async function main() {
     // 后续唤醒不再带它 —— 那时它已经在这条 DSH 会话的上下文里了。
     const initialPromptText = reason === 'bootstrap' ? formatInitialPromptV2(key) : '';
     const initialPromptLine = initialPromptText ? `${initialPromptText}\n\n` : '';
-    const base = roleLine + identityLine + ownerIdentityHint(cfg) + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + participationLine + preSleepLine;
+    const policy = roleLine + identityLine + ownerIdentityHint(cfg) + antiAiLine + proactiveLine + stickerLine + preSleepLine;
+    const reusePolicy = cfg.socialV2?.context?.deduplicateWakePolicy === true
+      && reason !== 'bootstrap' && knownPolicy === policy;
+    rememberPolicy?.(policy);
+    // Keep all changing state and message content. Reuse only byte-identical
+    // instructions already accepted in this exact DSH session.
+    const policyLine = reusePolicy
+      ? `${roleLine}【沿用规则】身份、主人权限、聊天风格、表情与等待开关沿用本会话已提供的规则；发言仍须调用工具，收尾提交已读水位。\n\n`
+      : policy;
+    const base = policyLine + tokenLine + initialPromptLine + replyLine + statusLine + wakeLine + memoryLine + participationLine;
     if (reason === 'dialogueFollowup') {
       return `${base}【续聊机会】${key}\n刚才叫你的人又发来了消息，不必再次 @ 或叫名字。结合连续上下文判断“你好可爱”“这也太厉害了”等是否在接你的话；是的话自然接着聊。若是在和别人说话、换了无关话题、只是在结束聊天或你没有值得补充的内容，可以只标记已读，不必回复。这次唤醒不要求必答，也不意味着允许执行新工作。`;
     }

@@ -30,3 +30,5 @@
 已验证：模型列表、非流式回复、关闭思考、图片识色与工具调用、工具结果回传后的流式回复，以及独立 DSH `standard` 测试会话实际返回 `PROVIDER_OK`。测试未向 QQ 群发送消息。
 
 运行 `qqbridge doctor` 检查本机服务。该检查本身不验证上游模型推理；渠道维护后还应执行一次隔离的模型调用。
+
+主用的超时和重试调优见 [Token 排查记录](TOKEN_ECONOMY_AUDIT.md)：`node ops/configure-token-economy.mjs` 可重复应用本机优化配置。
