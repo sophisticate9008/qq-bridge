@@ -1010,7 +1010,7 @@ server.tool(
 if (cfg.socialV2?.tools?.getImages !== false) {
   server.tool(
     'qq_get_message_images',
-    '获取指定 QQ 消息中的图片/表情，并直接以图像内容返回给模型（视觉模型可“看懂”）。当消息文本里出现 [图片]、[表情] 或 hasMedia=true 时调用。支持一条消息里的多张图片/表情；二代模式下必须携带会话令牌。',
+    '按需获取指定 QQ 消息中的图片/表情，并直接以图像内容返回给模型。仅在对方明确要求看图、回答问题需要图片或图片明显承接与你的当前话题时调用；[图片]、[表情]、hasMedia=true 和激活/续聊窗口本身不是调用理由。跳过无关图片和表情刷屏；已看过且仍在上下文中的图片不重复获取。描述具体图片内容前必须实际看过。支持一条消息里的多张图片/表情；二代模式下必须携带会话令牌。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       messageId: z.union([z.number(), z.string()]).describe('要查看的消息 id（QQ 消息 id 可为负数；二代也可用本地 seq）'),
@@ -1302,7 +1302,7 @@ if (cfg.socialV2?.sticker?.enabled !== false && cfg.socialV2?.tools?.setStickerR
 if (cfg.socialV2?.tools?.getForwardMsg !== false) {
   server.tool(
     'qq_get_forward_msg',
-    '查看当前会话中出现的合并转发消息/聊天记录内容（只读）。当消息文本里出现 `[转发消息 id=...]`，或 `qq_get_unread_messages` / `qq_get_recent_messages` / `qq_get_message_detail` 返回的某条消息带 `forwardIds` / `hasForward: true` 时调用。只能查看当前会话确实收到过的转发消息 id，不能任意读取。返回内容会包含每条消息的 text、media（图片/表情元数据）与 nestedForwardIds；如果合并转发里有图片，工具会直接把最多 5 张图片以图像内容返回给视觉模型；如果里面有嵌套合并转发，会附带嵌套转发 id 和前几条预览，必要时可继续用本工具查看嵌套 id。',
+    '按需查看当前会话中出现的合并转发消息/聊天记录（只读）。仅在对方明确请你查看或当前话题确实需要时调用；`[转发消息 id=...]`、`forwardIds`、`hasForward: true` 只表示有转发可查，不是自动展开指令。只能查看当前会话确实收到过的转发消息 id，不能任意读取。返回每条消息的 text、media 与 nestedForwardIds；其中最多 5 张图片会直接作为图像内容返回，因此跳过无关转发，不因激活/续聊窗口就读取。嵌套转发附带 id 和预览，也只在需要时继续查看。',
     {
       key: z.string().describe('会话 key，格式 group:群号 或 private:QQ号'),
       token: z.string().describe('会话令牌（见唤醒提示中的【会话令牌】）'),
