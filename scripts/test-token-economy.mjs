@@ -687,5 +687,13 @@ await test('message detail reports truncation instead of passing a preview off a
   assert.equal(long.data.info.textTruncated, true, 'a capped preview must be reported as truncated');
 });
 
+await test('resetting conversation history preserves the administrative pause', async ({ h, request, append }) => {
+  append('history to reset');
+  assert.equal((await request('activity', { admin: true, body: { paused: true } })).data.paused, true);
+  assert.equal((await request('reset', { admin: true, body: {} })).status, 200);
+  assert.equal((await request('activity', { admin: true })).data.paused, true);
+  assert.equal(h.socialV2.conversations.size, 0);
+});
+
 console.log(`\nToken economy bridge regressions: ${tests - failures}/${tests} passed.`);
 if (failures) process.exitCode = 1;

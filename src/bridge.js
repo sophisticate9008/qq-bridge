@@ -4611,8 +4611,8 @@ async function main() {
           wakeConfigUpdatedKeys.clear();
           markReadCalledKeys.clear();
           wakeConfigMissCount.clear();
-          socialV2.paused = false;
-          try { atomicWriteJson(SOCIAL_V2_FILE, { conversations: {} }); } catch (error) { log('重置二代状态：写空状态文件失败:', error?.message ?? error); }
+          // Reset history without implicitly resuming automatic DSH dispatch.
+          saveSocialV2State();
           log('控制台：二代 AI 状态已重置（会话、定时器、唤醒配置已清空，工具日志保留）');
           sendJson({ ok: true });
           return;
