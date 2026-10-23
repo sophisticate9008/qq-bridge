@@ -2400,7 +2400,10 @@ async function main() {
    */
   const TURN_BUSY_LEASE_MS = 15 * 60 * 1000;
   const turnLeaseNoted = new Set(); // 租约过期的日志去重（每个 session 只记一次）
-  const pendingWakeLeaseTimers = new Map(); // key -> timeout：防止 accepted 但无 turn/end 的唤醒把 key 永久标记为 busy
+  const pendingWakeLeases = new Map(); // key -> identity: a new delivery invalidates an older idle probe
+  const wakeIdleObservations = new Map();
+  const wakeProgress = new Map(); // sessionId -> identity, advanced by every live event/snapshot
+  const WAKE_IDLE_CONFIRM_MS = 5000;
   const wakeConfigUpdatedKeys = new Set();
   const markReadCalledKeys = new Set();
   const wakeConfigMissCount = new Map();
@@ -2439,6 +2442,7 @@ async function main() {
 
   /** 摄入一条会话事件到 token 账本；任何异常都不能影响 QQ 主链路。 */
   function recordSessionUsage(sessionId, event) {
+    if (reverse.has(sessionId)) wakeProgress.set(sessionId, {});
     if (event?.type?.startsWith('compaction/')) invalidateWakePolicyV2(sessionId);
     try {
       if (event?.type === 'model/selection') rememberModel(sessionId, event.data);
@@ -2461,6 +2465,7 @@ async function main() {
    * 重连时该帧会重新下发，账本内部按 (turn, step, retry) + seq 做幂等折叠，不会翻倍。
    */
   function recordSessionSnapshot(sessionId, snapshot) {
+    if (reverse.has(sessionId)) wakeProgress.set(sessionId, {});
     invalidateWakePolicyV2(sessionId);
     try {
       if (!snapshot) return;
@@ -2523,26 +2528,79 @@ async function main() {
     log(`重连后恢复了进行中的回合（${sessionId}，turn ${[...open].join(',')}）`);
   }
 
-  // 唤醒“防卡死”租约：正常应在 turn/end 时删除 pendingWakeKeys；若 DSH 接受了但一直没回合结束，
-  // 30 分钟后强制解除 busy 标记，避免该会话永久无法被唤醒。
+  // A timer cannot establish that DSH has stopped: recover from two confirmed
+  // idle + empty-inbox observations in the existing 5-second health poll.
+  // No new model call, cancellation, transcript replay or blind 30-minute unlock.
   function armPendingWakeLease(key) {
-    const old = pendingWakeLeaseTimers.get(key);
-    if (old) clearTimeout(old);
-    const timer = setTimeout(() => {
-      pendingWakeKeys.delete(key);
-      pendingWakeLeaseTimers.delete(key);
-    }, 30 * 60 * 1000);
-    timer.unref?.();
-    pendingWakeLeaseTimers.set(key, timer);
+    pendingWakeLeases.set(key, {});
+    wakeIdleObservations.delete(key);
   }
   function disarmPendingWakeLease(key) {
-    const old = pendingWakeLeaseTimers.get(key);
-    if (old) clearTimeout(old);
-    pendingWakeLeaseTimers.delete(key);
+    pendingWakeLeases.delete(key);
+    wakeIdleObservations.delete(key);
   }
   function clearAllPendingWakeLeases() {
-    for (const t of pendingWakeLeaseTimers.values()) clearTimeout(t);
-    pendingWakeLeaseTimers.clear();
+    pendingWakeLeases.clear();
+    wakeIdleObservations.clear();
+    wakeProgress.clear();
+  }
+
+  function captureWakeStatesV2() {
+    const states = new Map();
+    if (currentMode !== 'reserved2' || socialV2.paused) return states;
+    for (const [key, st] of socialV2.conversations) {
+      const sid = state.sessions[key];
+      if (!sid || (!pendingWakeKeys.has(key) && !v2TurnStartAt.has(sid) && !st.pendingWakeReasons?.length)) continue;
+      const q = promptQueues.get(key);
+      if (q?.running || q?.queue.length || queued.get(key)?.length || st.pendingWakeTimer) continue;
+      states.set(key, { sid, epoch: sessionEpoch, lease: pendingWakeLeases.get(key),
+        pending: pendingWakeKeys.has(key), start: v2TurnStartAt.get(sid), progress: wakeProgress.get(sid) });
+    }
+    return states;
+  }
+
+  function sameWakeState(a, b) {
+    return a && b && ['sid', 'epoch', 'lease', 'pending', 'start', 'progress'].every(k => a[k] === b[k]);
+  }
+
+  function reconcileWakeStatesV2(rows, observed) {
+    if (!Array.isArray(rows) || currentMode !== 'reserved2' || socialV2.paused) {
+      wakeIdleObservations.clear();
+      return;
+    }
+    const current = captureWakeStatesV2();
+    for (const key of wakeIdleObservations.keys()) if (!current.has(key)) wakeIdleObservations.delete(key);
+    const byId = new Map(rows.map(row => [row.sessionId, row]));
+    for (const [key, probe] of observed) {
+      const row = byId.get(probe.sid);
+      const inbox = row?.projections?.values?.inbox;
+      const empty = ['next-turn', 'next-step'].every(k => Array.isArray(inbox?.[k]) && inbox[k].length === 0);
+      if (!sameWakeState(probe, current.get(key)) || row?.agentAvailable !== true || row.running !== false || !empty) {
+        wakeIdleObservations.delete(key);
+        continue;
+      }
+      const previous = wakeIdleObservations.get(key);
+      if (!sameWakeState(previous?.probe, probe)) {
+        wakeIdleObservations.set(key, { probe, at: Date.now() });
+        continue;
+      }
+      if (Date.now() - previous.at < WAKE_IDLE_CONFIRM_MS) continue;
+      wakeIdleObservations.delete(key);
+      const stale = pendingWakeKeys.has(key) || v2TurnStartAt.has(probe.sid);
+      pendingWakeKeys.delete(key);
+      disarmPendingWakeLease(key);
+      collectors.delete(probe.sid);
+      v2TurnStartAt.delete(probe.sid);
+      turnLeaseNoted.delete(probe.sid);
+      sendToolSucceededSessions.delete(probe.sid);
+      pendingSendToolCalls.delete(probe.sid);
+      toolCallNames.delete(probe.sid);
+      wakeConfigUpdatedKeys.delete(key);
+      markReadCalledKeys.delete(key);
+      wakeConfigMissCount.delete(key);
+      if (stale) log(`[reserved2] DSH 连续确认空闲且队列为空，清理残留忙标记 ${key}；保留会话与上下文`);
+      replayPendingWakeReasonsV2(key);
+    }
   }
 
   // DSH 可用性探活 + 重启容错队列：
@@ -2877,10 +2935,13 @@ async function main() {
   };
   const checkDsh = async () => {
     let ok = false;
+    let sessionRows;
+    const observedWakes = captureWakeStatesV2();
     try {
       unwrap(await api.settings.describe({}), 'settings.describe');
       // The web UI/settings can stay alive while sessionController failed to load.
-      unwrap(await api.sessions.list({}), 'sessions.list');
+      const listing = unwrap(await api.sessions.list({}), 'sessions.list');
+      sessionRows = listing?.items;
       ok = true;
     } catch {}
     if (ok) {
@@ -2926,7 +2987,9 @@ async function main() {
         log(`桥接模式已切换为: ${currentMode}`);
         lastMode = currentMode;
       }
+      reconcileWakeStatesV2(sessionRows, observedWakes);
     } else if (dshReady) {
+      wakeIdleObservations.clear();
       dshReady = false;
       log('⚠️ DSH 不可用（重启中？），QQ 消息将入队等待');
     }
@@ -10462,33 +10525,48 @@ async function main() {
    */
   function replayPendingWakeReasonsV2(key) {
     const st = getSocialV2State(key);
+    // A reminder or another wake may already own this conversation. Do not
+    // consume then re-enqueue a reason with a different unread sequence.
+    if (currentMode !== 'reserved2' || socialV2.paused || isConversationBusyV2(key, st)) return null;
     if (!Array.isArray(st.pendingWakeReasons) || !st.pendingWakeReasons.length) return null;
-    const item = st.pendingWakeReasons.shift();
-    if (!item || typeof item !== 'object') return null;
-    if (isTimerWakeReason(item.reason)) {
-      if (item.reason === 'timeout') {
-        log(`[reserved2] ${key} 补收繁忙期间到期的潜水定时器`);
-        setupSleepTimerV2(key);
-      } else if (item.reason === 'replyCheck') {
-        log(`[reserved2] ${key} 补排繁忙期间的回复检查`);
-        scheduleReplyCheckV2(key);
-      } else if (item.reason === 'proactiveCheck') {
-        // 主动机会有周期性重排，错过一次可接受（也不该在回合结束时立刻补一刀）。
-        log(`[reserved2] ${key} 繁忙期间的主动机会已过期，跳过补发`);
-      } else {
-        log(`[reserved2] ${key} 补发繁忙期间积压的唤醒：${item.reason}`);
-        scheduleWakeV2(key, item.reason);
+    let skipped = null;
+    while (st.pendingWakeReasons.length) {
+      const item = st.pendingWakeReasons.shift();
+      if (!item || typeof item !== 'object') continue;
+      if (isTimerWakeReason(item.reason)) {
+        if (item.reason === 'timeout') {
+          log(`[reserved2] ${key} 补收繁忙期间到期的潜水定时器`);
+          setupSleepTimerV2(key);
+        } else if (item.reason === 'replyCheck') {
+          log(`[reserved2] ${key} 补排繁忙期间的回复检查`);
+          scheduleReplyCheckV2(key);
+        } else if (item.reason === 'proactiveCheck') {
+          log(`[reserved2] ${key} 繁忙期间的主动机会已过期，跳过补发`);
+          continue;
+        } else {
+          log(`[reserved2] ${key} 补发繁忙期间积压的唤醒：${item.reason}`);
+          scheduleWakeV2(key, item.reason);
+        }
+        if (isConversationBusyV2(key, st)) return { reason: item.reason, action: 'timer' };
+        skipped = { reason: item.reason, action: 'timer' };
+        continue;
       }
-      return { reason: item.reason, action: 'timer' };
+      // One fresh snapshot covers all accumulated message wakes. Pick the
+      // strongest reason once, preserving timer reasons for their own policy.
+      const messages = [item, ...st.pendingWakeReasons.filter(r => r && !isTimerWakeReason(r.reason))];
+      st.pendingWakeReasons = st.pendingWakeReasons.filter(r => r && isTimerWakeReason(r.reason));
+      const relevant = messages.filter(r => Array.isArray(st.unread) && st.unread.some(m => m && Number(m.seq) >= Number(r.seq)));
+      relevant.sort((a, b) => wakePriorityV2(b.reason) - wakePriorityV2(a.reason));
+      if (relevant.length) {
+        const next = relevant[0];
+        log(`[reserved2] ${key} 合并补发繁忙期间积压的唤醒：${next.reason}@seq${next.seq}（${relevant.length} 条）`);
+        scheduleWakeV2(key, next.reason);
+        return { reason: next.reason, action: 'replayed' };
+      }
+      log(`[reserved2] ${key} 繁忙期间消息唤醒已被当前回合处理，跳过 ${messages.length} 条`);
+      skipped = { reason: item.reason, action: 'skipped' };
     }
-    const stillRelevant = Array.isArray(st.unread) && st.unread.some((m) => m && Number(m.seq) >= Number(item.seq));
-    if (stillRelevant) {
-      log(`[reserved2] ${key} 补发繁忙期间积压的唤醒：${item.reason}@seq${item.seq}`);
-      scheduleWakeV2(key, item.reason);
-      return { reason: item.reason, action: 'replayed' };
-    }
-    log(`[reserved2] ${key} 繁忙期间唤醒 ${item.reason}@seq${item.seq} 已被当前回合处理，跳过补发`);
-    return { reason: item.reason, action: 'skipped' };
+    return skipped;
   }
 
   function setupSleepTimerV2(key) {

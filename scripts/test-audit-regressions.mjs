@@ -158,7 +158,10 @@ await test('R4 timeout/replyCheck 类暂存唤醒按定时器语义补发', asyn
     const text = h.calls.prompts[0].content.map((c) => String(c?.text ?? '')).join('\n');
     assert.match(text, /有限潜水时间已到|睡眠时间已到/);
 
-    // 第二条 @ 与未读无关但对应消息已被处理 → 仍然按消息语义跳过
+    // 新补投的 timeout 回合仍在途时，保留原队列；结束后再按消息语义跳过。
+    assert.equal(h.replayPendingWakeReasonsV2('group:456'), null);
+    h.pendingWakeKeys.delete('group:456');
+    h.disarmPendingWakeLease('group:456');
     const second = h.replayPendingWakeReasonsV2('group:456');
     assert.equal(second?.action, 'skipped', '已被当前回合处理的消息类唤醒仍然跳过');
   } finally { await h.close(); }
