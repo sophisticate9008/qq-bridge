@@ -8,6 +8,7 @@
 import fs from 'node:fs';
 import { createDelegationAuthority } from './local/delegation-authority.js';
 import { localWakeReason, ownerIdentityHint } from './local/owner-policy.js';
+import { chatProviderForKey } from './local/chat-context-policy.js';
 import { createProfileActions } from './local/profile-actions.js';
 import { dialogueWakeReason, renewDialogueAfterReply } from './local/dialogue-wake.js';
 import os from 'node:os';
@@ -7949,9 +7950,9 @@ async function main() {
   // 返回 'applied' | 'not-found' | 'failed'。
   // 'not-found' 表示 DSH 侧会话已经不存在（DSH 重启、异常退出、归档竞态），
   // 本地映射已失效，调用方必须退役重建，否则每条消息都会对着一个不存在的会话重试。
-  async function ensureChatModel(sessionId) {
+  async function ensureChatModel(sessionId, key) {
     if (modelAppliedSessions.get(sessionId) === modelSelectionEpoch) return 'applied';
-    const provider = String(cfg.dsh?.provider || 'deepseek-official');
+    const provider = chatProviderForKey(String(cfg.dsh?.provider || 'deepseek-official'), key, cfg.dsh?.conversationContext === true);
     const model = String(cfg.dsh?.model || 'deepseek-flash');
     const effort = String(cfg.dsh?.reasoningEffort || REASONING_EFFORT_DEFAULT);
     let lastError = null;
@@ -7986,7 +7987,7 @@ async function main() {
       if (!isCurrentSession(key, existing)) {
         retireSession(key);
       } else {
-        const applied = await ensureChatModel(existing);
+        const applied = await ensureChatModel(existing, key);
         // DSH 侧会话已不存在（DSH 重启、异常退出、归档竞态）：本地映射已经失效，
         // 必须退役并重建，否则每条消息都会对着一个不存在的会话重试 selectModel。
         if (applied === 'not-found') {
@@ -8054,7 +8055,7 @@ async function main() {
       state.sessionPolicies[key] = policy;
       reverse.set(sessionId, key);
       saveState();
-      await ensureChatModel(sessionId);
+      await ensureChatModel(sessionId, key);
       if (epoch !== sessionEpoch || !isCurrentSession(key, sessionId)) {
         if (state.sessions[key] === sessionId) retireSession(key);
         throw new Error('会话创建期间已重置或权限已变化');

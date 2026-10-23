@@ -12,6 +12,8 @@
 
 两个 DeepSeek provider 独立保留，GPT 只有一个。主用关闭思考，沿用鲸鲸聊天人设及 GPT 委派策略。当前没有跨 provider 自动故障切换；官方渠道作为可切换的备用。
 
+上下文现按会话类型分级：群聊 172K、私聊 384K、GPT 保持 512K。控制台中增加的 `deepseek-primary-group` / `deepseek-official-group` 是同一渠道的内部群聊容量路由，不是新增 API 渠道。实现、部署与重置记录见 [上下文分级](CHAT_CONTEXT_TIERS.md)。
+
 ## 配置位置
 
 - `config/local/models.json`：私有连接资料。`deepseek` 保留官方资料；新渠道在 `deepseekPrimary`；`deepseekRouting` 记录主备部署状态，不是自动故障切换实现。

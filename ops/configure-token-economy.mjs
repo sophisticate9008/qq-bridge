@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { probeCookie, probeRpc } from '../scripts/probe-auth.mjs';
+import { CHAT_CONTEXT_WINDOWS } from '../src/local/chat-context-policy.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 process.env.DSH_HOME = path.join(root, 'dsh/home');
@@ -13,7 +14,7 @@ const settings = await rpc('settings/describe', {});
 if (!settings.ok) throw new Error('DSH settings unavailable');
 const ns = settings.value.namespaces.find(n => n.ns === 'llm-pi-ai');
 if (!ns?.value?.providers?.['deepseek-primary']) throw new Error('Primary DeepSeek provider is not configured');
-const contextWindow = 256 * 1024;
+const contextWindow = CHAT_CONTEXT_WINDOWS.private;
 const providers = { 'deepseek-primary': {
   defaultContextWindow: contextWindow,
   models: ns.value.providers['deepseek-primary'].models.map(model => ({ ...model, contextWindow })),
@@ -27,7 +28,10 @@ const updated = await rpc('settings/update', {
   patch: { providers },
 });
 if (!updated.ok) throw new Error(`DSH rejected timeout settings: ${updated.error?.code}`);
-const official = settings.value.namespaces.find(n => n.ns === 'llm-deepseek');
+// A settings write can advance the profile revision shared by other namespaces.
+const afterPrimary = await rpc('settings/describe', {});
+if (!afterPrimary.ok) throw new Error('DSH settings unavailable after primary update');
+const official = afterPrimary.value.namespaces.find(n => n.ns === 'llm-deepseek');
 if (official) {
   const result = await rpc('settings/update', {
     ns: official.ns, expectedRevision: official.revision,
@@ -38,4 +42,4 @@ if (official) {
 }
 config.socialV2.context.deduplicateWakePolicy = true;
 fs.writeFileSync(file, JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
-console.log('Primary timeouts and DeepSeek context windows (256K) updated live; GPT settings preserved. Restart Bridge for policy changes.');
+console.log('Primary timeouts and DeepSeek base/private windows (384K) updated live; group aliases use 172K. GPT settings preserved.');
