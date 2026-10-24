@@ -1,6 +1,6 @@
 # 文档索引（docs/README.md）
 
-> 根目录只留 `README.md` / `README.en.md` / `RULES.md` 三个文档，其余全部在本目录下。
+> 根目录保留 `README.md` / `README.en.md` / `RULES.md` 和 Codex 自动发现入口 `AGENTS.md`，详细说明放在本目录下。
 > 仓库目录结构与 `scripts/` 命名约定见 **[FOLDER_MAP.md](FOLDER_MAP.md)**。
 >
 > **状态标记**：✅ 仍然有效（按它做就对） · ⚠️ 部分过时（见备注） · 🗄️ 已被取代（保留作背景）
@@ -76,5 +76,6 @@
 
 ## 本机部署扩展
 
+- [Codex 跨会话交接](guides/CODEX_HANDOFF.md)：有效；GitHub 持久认证、其他 API 配置位置及后续会话维护入口，不含密钥值。
 - [本机部署与长期维护](guides/LOCAL_DEPLOYMENT.md)：有效；目录、模型分工、启动、验证、备份及 Fork 工作流。
 - [qqbridge 命令与 boot 启动流程](guides/QQBRIDGE_CLI.md)：整套启动、单组件重启、健康检查、日志和安装迁移。
